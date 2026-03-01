@@ -7,10 +7,12 @@ WITH inspection_base AS (
         COUNT(CASE WHEN is_critical_violation = FALSE THEN 1 END)      AS non_critical_violations
     FROM {{ ref('stg_inspections') }}
     WHERE inspection_date IS NOT NULL
+      AND inspection_type IS NOT NULL   -- exclude new establishments not yet inspected
     GROUP BY restaurant_id, inspection_date, inspection_type, action, grade, grade_date
 )
 SELECT
-    MD5(CONCAT_WS('|', i.restaurant_id, i.inspection_date::VARCHAR, i.inspection_type)) AS fct_inspection_key,
+    -- action added to key: same restaurant/date/type can have multiple actions
+    MD5(CONCAT_WS('|', i.restaurant_id, i.inspection_date::VARCHAR, i.inspection_type, COALESCE(i.action,''))) AS fct_inspection_key,
     MD5(i.restaurant_id)        AS dim_restaurant_key,
     d.date_key                  AS inspection_date_key,
     i.restaurant_id,
