@@ -40,7 +40,7 @@ RESTAURANT_INTELLIGENCE.MARTS
   └── fct_violations        ← Individual violations cited (granular)
 ```
 
-**Load strategy:** Full TRUNCATE + reload on every pipeline run. No incremental logic — keeps the demo simple and idempotent. The full load takes ~2 minutes on an XS warehouse.
+**Load strategy:** Full TRUNCATE + reload on every pipeline run. No incremental logic — keeps the demo simple and idempotent. Typical full load timing: ~110s fetching from Socrata (network-bound) + ~17s loading to Snowflake via internal stage = ~127s total.
 
 ---
 
@@ -145,7 +145,7 @@ Started: 2026-03-01 08:47:43 UTC  |  Row limit: 1,000
 python load_inspections.py
 ```
 
-Fetches the complete dataset (~250k rows). Expect ~2 minutes total.
+Fetches the complete dataset (~296k rows). Expect ~2 minutes total (~110s Socrata fetch + ~17s Snowflake load).
 
 ### Step 7 — Set up dbt
 

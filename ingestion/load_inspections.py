@@ -39,6 +39,10 @@ from tqdm import tqdm
 
 import config
 
+import pandas as pd
+from snowflake.connector.pandas_tools import write_pandas
+
+
 # Ordered to match the RAW table DDL in 01_snowflake_setup.sql
 COLUMN_ORDER = [
     "camis", "dba", "boro", "building", "street", "zipcode", "phone",
@@ -131,10 +135,6 @@ def normalise_row(record: dict) -> tuple:
 # ── Snowflake load ────────────────────────────────────────────────────────────
 
 def load_to_snowflake(records: list[dict]) -> None:
-    """
-    Truncates RAW.INSPECTIONS_RAW and bulk-inserts all records using
-    executemany (batched internally by the Snowflake connector).
-    """
     print("Connecting to Snowflake …")
     conn = snowflake.connector.connect(
         account   = config.SNOWFLAKE_ACCOUNT,
@@ -149,37 +149,29 @@ def load_to_snowflake(records: list[dict]) -> None:
     cur = conn.cursor()
 
     try:
-        # 1. Truncate (wipe previous load)
         target = f"{config.SNOWFLAKE_DATABASE}.{config.SNOWFLAKE_SCHEMA}.{config.SNOWFLAKE_TABLE}"
         print(f"Truncating {target} …")
         cur.execute(f"TRUNCATE TABLE {target}")
 
-        # 2. Prepare INSERT — 26 data columns + _LOADED_AT uses DEFAULT
-        placeholders = ", ".join(["%s"] * len(COLUMN_ORDER))
-        insert_sql = f"""
-            INSERT INTO {target}
-                ({", ".join(c.upper() for c in COLUMN_ORDER)})
-            VALUES ({placeholders})
-        """
+        print(f"Building dataframe from {len(records):,} records …")
+        df = pd.DataFrame([
+            {col.upper(): str(r.get(col, "") or "").strip() or None for col in COLUMN_ORDER}
+            for r in records
+        ])
 
-        # 3. Normalise rows
-        print(f"Normalising {len(records):,} records …")
-        rows = [normalise_row(r) for r in records]
+        print(f"Loading via internal stage (PUT + COPY INTO) …")
+        success, nchunks, nrows, _ = write_pandas(
+            conn,
+            df,
+            table_name    = config.SNOWFLAKE_TABLE,
+            database      = config.SNOWFLAKE_DATABASE,
+            schema        = config.SNOWFLAKE_SCHEMA,
+            auto_create_table = False,
+            overwrite     = False,
+        )
 
-        # 4. Bulk insert in chunks of 10,000
-        chunk_size = 10_000
-        total_inserted = 0
-        with tqdm(total=len(rows), desc="Inserting rows", unit="rows", dynamic_ncols=True) as pbar:
-            for i in range(0, len(rows), chunk_size):
-                chunk = rows[i : i + chunk_size]
-                cur.executemany(insert_sql, chunk)
-                total_inserted += len(chunk)
-                pbar.update(len(chunk))
+        print(f"\n✅ Inserted {nrows:,} rows into {target} ({nchunks} chunk(s))")
 
-        conn.commit()
-        print(f"\n✅ Inserted {total_inserted:,} rows into {target}")
-
-        # 5. Quick row-count sanity check
         cur.execute(f"SELECT COUNT(*) FROM {target}")
         count = cur.fetchone()[0]
         print(f"   Row count confirmed: {count:,}")
@@ -187,7 +179,6 @@ def load_to_snowflake(records: list[dict]) -> None:
     finally:
         cur.close()
         conn.close()
-
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
