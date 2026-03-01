@@ -1,0 +1,47 @@
+version: 2
+
+models:
+  - name: dim_restaurant
+    description: "Restaurant dimension - one row per CAMIS"
+    columns:
+      - name: dim_restaurant_key
+        tests: [unique, not_null]
+      - name: restaurant_id
+        tests: [unique, not_null]
+
+  - name: dim_violation_type
+    description: "Violation type reference - one row per violation code"
+    columns:
+      - name: dim_violation_key
+        tests: [unique, not_null]
+      - name: violation_code
+        tests: [unique, not_null]
+
+  - name: dim_date
+    description: "Date spine 2000-01-01 to 2030-12-31"
+    columns:
+      - name: calendar_date
+        tests: [unique, not_null]
+      - name: date_key
+        tests: [unique, not_null]
+
+  - name: fct_inspections
+    description: "Inspection events - one row per restaurant × date × inspection type"
+    columns:
+      - name: fct_inspection_key
+        tests: [unique, not_null]
+      - name: dim_restaurant_key
+        tests: [not_null]
+      - name: grade
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['A', 'B', 'C', 'Z', 'P', 'G', null]
+
+  - name: fct_violations
+    description: "Individual violations - one row per violation cited per inspection"
+    columns:
+      - name: fct_violation_key
+        tests: [unique, not_null]
+      - name: dim_restaurant_key
+        tests: [not_null]

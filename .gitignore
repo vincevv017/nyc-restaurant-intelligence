@@ -1,0 +1,23 @@
+# Environment variables - NEVER commit
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.venv-dbt/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+logs/

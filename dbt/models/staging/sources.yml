@@ -1,0 +1,8 @@
+version: 2
+
+sources:
+  - name: raw
+    database: RESTAURANT_INTELLIGENCE
+    schema: RAW
+    tables:
+      - name: inspections_raw

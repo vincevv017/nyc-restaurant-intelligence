@@ -1,0 +1,13 @@
+nyc_restaurant_intelligence:
+  target: dev
+  outputs:
+    dev:
+      type:      snowflake
+      account:   ABC12345        # just the locator, no region suffix
+      user:      your_username
+      password:  your_password
+      role:      RESTAURANT_LOADER
+      database:  RESTAURANT_INTELLIGENCE
+      warehouse: RESTAURANT_WH
+      schema:    STAGING
+      threads:   4

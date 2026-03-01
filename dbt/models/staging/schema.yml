@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: stg_inspections
+    description: "Cleaned and typed inspection records - full grain (one row per inspection × violation)"
+    columns:
+      - name: restaurant_id
+        tests: [not_null]
+      - name: inspection_date
+        tests: [not_null]
+      - name: borough
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island', 'Missing', '0', null]
+
+  - name: stg_restaurants
+    description: "One row per restaurant (CAMIS) - latest known profile"
+    columns:
+      - name: restaurant_id
+        tests: [unique, not_null]
+
+  - name: stg_violations
+    description: "Violation code reference - one row per violation code"
+    columns:
+      - name: violation_code
+        tests: [unique, not_null]
