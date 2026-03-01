@@ -34,7 +34,7 @@ SNOWFLAKE_TABLE     = "INSPECTIONS_RAW"
 # ── Socrata / NYC Open Data ───────────────────────────────────────────────────
 # Dataset: NYC Restaurant Inspection Results
 # Docs: https://dev.socrata.com/foundry/data.cityofnewyork.us/gv23-aida
-SOCRATA_ENDPOINT = "https://data.cityofnewyork.us/resource/gv23-aida.json"
+SOCRATA_ENDPOINT = "https://data.cityofnewyork.us/resource/43nn-pn8j.json"
 NYC_APP_TOKEN    = os.environ.get("NYC_APP_TOKEN", "")   # Optional but recommended
 
 # Pagination: Socrata max is 50,000 rows per request

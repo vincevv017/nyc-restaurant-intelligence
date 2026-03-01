@@ -380,4 +380,44 @@ MIT — use freely, attribution appreciated.
 
 ---
 
-*Built by [Vincent Vikor](https://www.linkedin.com/in/vincevkor/) | Solutions Architect | Snowflake Data Superhero candidate 2027*
+*Built by [Vincent Vikor](https://www.linkedin.com/in/vincevkor/) | Solutions Architect*
+
+---
+
+## Data Quality Notes
+
+These issues were discovered during pipeline validation against the full 296k row dataset. All are handled in `stg_inspections.sql` — documented here so future maintainers understand the source data quirks.
+
+### 1. Duplicate records from Socrata API
+
+The Socrata API returns genuine duplicate rows for some violation records — every column identical including `loaded_at`. Root cause is unknown (likely a source system issue on NYC DOHMH's side). Fixed by deduplication in `stg_inspections` using `QUALIFY ROW_NUMBER()`.
+
+### 2. Score adjudication updates create variant rows
+
+The same violation for the same inspection can appear multiple times with **different scores** — for example SWAY LOUNGE (CAMIS 40911114) on 2017-11-04 has violation `04M` with score 15 AND score 20. This is the adjudication update pattern: the score was revised after the initial citation and both versions persist in Socrata.
+
+Fix: partition on the business key (`restaurant_id`, `inspection_date`, `inspection_type`, `action`, `violation_code`, `is_critical_violation`, `record_date`) and keep `loaded_at DESC` — the most recently ingested record, which reflects the latest adjudicated score.
+
+### 3. Grade 'N' (Not Yet Graded)
+
+NYC DOHMH documentation lists grades A/B/C/Z/P but the actual data also contains `N` (Not Yet Graded) for 2,176 inspection records. Added to accepted values in `schema.yml`.
+
+### 4. New establishments with null inspection_type
+
+Restaurants that have applied for a permit but not yet been inspected appear in the dataset with `inspection_date = 1900-01-01` and `inspection_type IS NULL`. These 3,267 records are filtered out in `fct_inspections` and `fct_violations` since they represent administrative registrations, not inspection events.
+
+### 5. Action field required in surrogate keys
+
+The grain `restaurant × inspection_date × inspection_type` is not unique — the same inspection can have multiple `action` values (e.g. "Violations were cited" vs "Establishment Closed"). The `action` field was added to both fact table surrogate keys to ensure uniqueness.
+
+### Deduplication logic in stg_inspections
+
+```sql
+QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY restaurant_id, inspection_date, inspection_type, action,
+                 violation_code, is_critical_violation, record_date
+    ORDER BY loaded_at DESC, inspection_score DESC
+) = 1
+```
+
+Keeps the most recently loaded record per business key, with `inspection_score DESC` as tiebreaker to retain the most conservative (highest) adjudicated score when `loaded_at` is identical.

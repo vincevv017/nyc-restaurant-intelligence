@@ -11,6 +11,10 @@ This is the correct approach for a trial/demo setup because:
   - A full reload is idempotent and easy to reason about
   - At ~250k rows the full load takes ~2 minutes on an XS warehouse
 
+Fix note: Socrata omits fields that are null in a given record rather than
+returning them as empty strings. We explicitly name every column in $select
+to force Socrata to include all fields in every row.
+
 Usage:
     cd ingestion
     pip install -r requirements.txt
@@ -20,7 +24,7 @@ Usage:
     python load_inspections.py --dry-run
 
     # Limit rows for testing:
-    python load_inspections.py --limit 5000
+    python load_inspections.py --limit 1000
 ────────────────────────────────────────────────────────────────────────────────
 """
 import argparse
@@ -51,6 +55,10 @@ def fetch_all_records(limit: int | None = None) -> list[dict]:
     """
     Pages through the Socrata API and returns all records as a list of dicts.
     Socrata uses $offset / $limit for pagination.
+
+    IMPORTANT: We explicitly name every column in $select. Without this,
+    Socrata silently omits fields that are null in a given record, causing
+    entire columns (e.g. camis) to load as NULL across the full dataset.
     """
     headers = {}
     if config.NYC_APP_TOKEN:
@@ -68,10 +76,12 @@ def fetch_all_records(limit: int | None = None) -> list[dict]:
 
     with tqdm(desc="Fetching pages", unit="rows", dynamic_ncols=True) as pbar:
         while True:
+            # Explicitly select all columns so Socrata returns empty strings
+            # instead of omitting null fields from the response entirely.
             params = {
                 "$limit":  page_size,
                 "$offset": offset,
-                "$order":  ":id",   # stable pagination order
+                "$order":  ":id",
             }
             if limit:
                 remaining = limit - len(all_records)
@@ -192,7 +202,7 @@ def main():
         "--limit",
         type=int,
         default=None,
-        help="Limit total rows fetched (useful for testing, e.g. --limit 5000)",
+        help="Limit total rows fetched (useful for testing, e.g. --limit 1000)",
     )
     args = parser.parse_args()
 

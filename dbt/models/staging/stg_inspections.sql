@@ -14,7 +14,7 @@ cleaned AS (
         TRY_TO_DECIMAL(TRIM(LATITUDE),  10, 7)                  AS latitude,
         TRY_TO_DECIMAL(TRIM(LONGITUDE), 10, 7)                  AS longitude,
         TRIM(NTA)                                               AS neighborhood_code,
-        TRY_TO_DATE(INSPECTION_DATE, 'MM/DD/YYYY')              AS inspection_date,
+        TRY_TO_TIMESTAMP(INSPECTION_DATE)::DATE    AS inspection_date,
         TRIM(INSPECTION_TYPE)                                   AS inspection_type,
         TRIM(ACTION)                                            AS action,
         TRIM(VIOLATION_CODE)                                    AS violation_code,
@@ -26,10 +26,15 @@ cleaned AS (
         END                                                     AS is_critical_violation,
         TRY_TO_NUMBER(TRIM(SCORE))                              AS inspection_score,
         NULLIF(TRIM(GRADE), '')                                 AS grade,
-        TRY_TO_DATE(GRADE_DATE, 'MM/DD/YYYY')                   AS grade_date,
-        TRY_TO_DATE(RECORD_DATE, 'MM/DD/YYYY')                  AS record_date,
+        TRY_TO_TIMESTAMP(GRADE_DATE)::DATE         AS grade_date,
+        TRY_TO_TIMESTAMP(RECORD_DATE)::DATE        AS record_date,
         _LOADED_AT                                              AS loaded_at
     FROM source
     WHERE CAMIS IS NOT NULL AND TRIM(CAMIS) != ''
 )
 SELECT * FROM cleaned
+QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY restaurant_id, inspection_date, inspection_type, action,
+                 violation_code, is_critical_violation, record_date
+    ORDER BY loaded_at DESC, inspection_score DESC
+) = 1
