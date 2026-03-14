@@ -1,6 +1,8 @@
-<img src="https://cdn.simpleicons.org/snowflake/29B5E8" width="40" align="left" alt="Snowflake"/>
+<div align="center">
+  <img src="https://cdn.simpleicons.org/snowflake/29B5E8" width="80" alt="Snowflake"/>
 
-# NYC Restaurant Intelligence — Agentic BI on Snowflake
+  # NYC Restaurant Intelligence — Agentic BI on Snowflake
+</div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Snowflake](https://img.shields.io/badge/platform-Snowflake-29B5E8.svg)](https://www.snowflake.com/)
