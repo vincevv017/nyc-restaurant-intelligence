@@ -1,0 +1,17 @@
+# NYC Restaurant Intelligence — cortex dependencies
+# Install with: pip install -r requirements.txt
+
+# Snowflake
+snowflake-connector-python[pandas]==3.10.1
+
+requests==2.32.3
+python-dotenv==1.0.1
+tqdm==4.66.4
+pandas>=2.0
+PyJWT>=2.8.0
+cryptography
+
+# PDF text extraction (Phase 3 — load_documents.py)
+# pdfplumber wraps pdfminer.six and handles both text-layer PDFs
+# and structured layout extraction cleanly.
+pdfplumber>=0.10.0

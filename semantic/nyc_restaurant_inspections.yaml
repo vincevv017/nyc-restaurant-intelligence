@@ -1,0 +1,1382 @@
+# =============================================================================
+# NYC Restaurant Inspections — Snowflake Semantic View (YAML Specification)
+# =============================================================================
+# Semantic view for NYC Department of Health restaurant inspection analytics.
+# Designed for public health regulators, food safety analysts, and AI agents
+# (Cortex Analyst / Snowflake Intelligence) that need to answer questions about
+# restaurant compliance, violation patterns, and enforcement outcomes.
+#
+#
+# Scoring context (NYC DOHMH):
+#   Score 0–13 → Grade A (passes, minimal violations)
+#   Score 14–27 → Grade B (passes, significant violations — triggers re-inspection)
+#   Score 28+ → Grade C (fails, conditional permit — triggers re-inspection)
+#   Higher score = more violations = worse outcome.
+#
+# Inspection cycle:
+#   Initial inspection → if score >= 14, re-inspection is scheduled.
+#   Grade is assigned at re-inspection (or at initial if score < 14).
+#   Establishments may also receive Grade Z (pending) or N (not yet graded).
+#
+# Data source: NYC Open Data — DOHMH New York City Restaurant Inspection Results
+# Refresh: Daily via Socrata API → Snowflake internal stage → TRUNCATE + reload
+# Repository: https://github.com/vincevv017/nyc-restaurant-intelligence
+# =============================================================================
+
+name: nyc_restaurant_inspections
+description: >
+  NYC Department of Health restaurant inspection analytics.
+  Covers inspection outcomes, violation citations, restaurant profiles,
+  and enforcement actions across all five boroughs.
+  Inspection scores are penalty-based: higher score means more violations
+  (Grade A: 0–13, B: 14–27, C: 28+). Data refreshed daily from NYC Open Data.
+
+# =============================================================================
+# CUSTOM INSTRUCTIONS
+# =============================================================================
+module_custom_instructions:
+  question_categorization: |
+    This semantic model covers NYC DOHMH restaurant inspections only.
+    Reject questions unrelated to restaurant inspections, food safety,
+    violations, or NYC DOHMH enforcement. For ambiguous terms like "best" or "top" restaurants, interpret as
+    lowest average inspection score unless the user specifies other criteria.
+    Borough value "0" means missing data — if a user asks about boroughs,
+    exclude borough = '0' unless specifically asked to include unknown boroughs.
+
+  sql_generation: |
+    SCORING RULES (critical — scores are counterintuitive):
+    - Inspection scores are PENALTY-BASED: higher score = worse outcome.
+    - Score 0 = no violations found (best possible). Score 100+ = severe.
+    - "Best" restaurants = LOWEST scores. "Worst" restaurants = HIGHEST scores.
+    - Grade A = 0-13 points (passes). Grade B = 14-27. Grade C = 28+ (fails).
+    - When sorting by "best", use ORDER BY score ASC. By "worst", ORDER BY score DESC.
+
+    INSPECTION CYCLE:
+    - Only grades A, B, C are final. Filter to these when asked about "graded" inspections.
+    - Grade Z = pending, P = pre-permit, N = not yet graded. Exclude from grade analysis unless asked.
+
+    BOROUGH DATA:
+    - Always exclude borough = '0' from borough breakdowns unless explicitly asked.
+    - Valid boroughs: Manhattan, Brooklyn, Queens, Bronx, Staten Island (mixed case, not uppercase).
+
+    GEOSPATIAL:
+    - Use ST_MAKEPOINT(longitude, latitude) — note: longitude FIRST, latitude SECOND.
+    - ST_DISTANCE returns meters. 1 mile = 1609.34 meters. 1 km = 1000 meters.
+
+    FORMATTING:
+    - Round ALL percentages to 1 decimal place using ROUND(expr, 1).
+    - Round ALL scores to whole numbers using ROUND(expr, 0).
+    - If no date filter is provided, default to the last 12 months.
+
+    RESPONSE STYLE:
+    - For comparison questions ("X vs Y"), return a simple side-by-side table.
+    - Do not add excessive derived columns unless the user asks for detailed analysis.
+
+# =============================================================================
+# LOGICAL TABLES
+# =============================================================================
+tables:
+
+  # ---------------------------------------------------------------------------
+  # DIMENSION: Restaurants
+  # ---------------------------------------------------------------------------
+  - name: restaurants
+    description: >
+      Restaurant dimension — one row per unique NYC restaurant (CAMIS identifier).
+      Contains the latest known name, address, cuisine type, borough, and
+      geographic coordinates. Restaurants span all five NYC boroughs and
+      represent every food service establishment subject to DOHMH inspection.
+    base_table:
+      database: RESTAURANT_INTELLIGENCE
+      schema: MARTS
+      table: DIM_RESTAURANT
+
+    dimensions:
+
+      - name: dim_restaurant_key
+        description: >
+          Surrogate key (MD5 hash) uniquely identifying each restaurant record.
+          Used internally for joining to fact tables.
+        expr: DIM_RESTAURANT_KEY
+        data_type: VARCHAR
+        unique: true
+
+      - name: restaurant_id
+        synonyms:
+          - "CAMIS"
+          - "CAMIS ID"
+          - "restaurant identifier"
+          - "establishment ID"
+        description: >
+          Unique NYC DOHMH identifier for the restaurant (CAMIS number).
+          Each CAMIS maps to one physical establishment. This is the primary
+          business key linking inspections and violations to a restaurant.
+        expr: RESTAURANT_ID
+        data_type: VARCHAR
+        unique: true
+
+      - name: restaurant_name
+        synonyms:
+          - "establishment name"
+          - "business name"
+          - "restaurant"
+          - "name"
+        description: >
+          Legal business name of the restaurant as registered with NYC DOHMH.
+          Names may change over time; this reflects the most recent record.
+        expr: RESTAURANT_NAME
+        data_type: VARCHAR
+
+      - name: borough
+        synonyms:
+          - "NYC borough"
+          - "county"
+          - "boro"
+        description: >
+          NYC borough where the restaurant is located.
+          New York City has five boroughs, each a separate county.
+        expr: BOROUGH
+        data_type: VARCHAR
+        is_enum: true
+        sample_values:
+          - "Manhattan"
+          - "Brooklyn"
+          - "Queens"
+          - "Bronx"
+          - "Staten Island"
+          - "0"
+
+      - name: cuisine_type
+        synonyms:
+          - "cuisine"
+          - "cuisine description"
+          - "food type"
+          - "type of food"
+          - "restaurant type"
+          - "category"
+        description: >
+          Primary cuisine classification assigned by NYC DOHMH.
+          Over 80 distinct cuisine types ranging from American to Vietnamese.
+          Used to analyze violation patterns across restaurant categories.
+        expr: CUISINE_DESCRIPTION
+        data_type: VARCHAR
+        sample_values:
+          - "American"
+          - "Chinese"
+          - "Italian"
+          - "Mexican"
+          - "Japanese"
+          - "Pizza"
+          - "Caribbean"
+          - "Latin American"
+          - "Indian"
+          - "Thai"
+          - "Korean"
+          - "French"
+          - "Bakery Products/Desserts"
+          - "Café/Coffee/Tea"
+
+      - name: zipcode
+        synonyms:
+          - "zip code"
+          - "zip"
+          - "postal code"
+        description: >
+          Five-digit US postal zip code of the restaurant's physical address.
+        expr: ZIPCODE
+        data_type: VARCHAR
+
+      - name: street_address
+        synonyms:
+          - "address"
+          - "location"
+          - "full address"
+        description: >
+          Full street address combining building number and street name.
+        expr: STREET_ADDRESS
+        data_type: VARCHAR
+
+      - name: neighborhood_code
+        synonyms:
+          - "neighborhood"
+          - "community district"
+          - "NTA"
+        description: >
+          Neighborhood Tabulation Area code assigned by NYC.
+          Used for geographic sub-borough analysis.
+        expr: NEIGHBORHOOD_CODE
+        data_type: VARCHAR
+
+      - name: phone
+        synonyms:
+          - "phone number"
+          - "telephone"
+          - "contact"
+        description: >
+          Restaurant contact phone number on file with NYC DOHMH.
+        expr: PHONE
+        data_type: VARCHAR
+
+    facts:
+
+      - name: latitude
+        synonyms:
+          - "lat"
+          - "y coordinate"
+        description: >
+          WGS 84 latitude of the restaurant location. Use with longitude
+          for geospatial analysis. To compute distance between restaurants,
+          use ST_DISTANCE(ST_MAKEPOINT(longitude, latitude), ST_MAKEPOINT(other_lng, other_lat)).
+          Latitude range for NYC: approximately 40.49 to 40.92.
+        expr: LATITUDE
+        data_type: NUMBER
+
+      - name: longitude
+        synonyms:
+          - "lng"
+          - "lon"
+          - "x coordinate"
+        description: >
+          WGS 84 longitude of the restaurant location. Use with latitude
+          for geospatial analysis. Longitude range for NYC: approximately -74.26 to -73.70.
+        expr: LONGITUDE
+        data_type: NUMBER
+
+    metrics:
+
+      - name: total_restaurants
+        synonyms:
+          - "restaurant count"
+          - "number of restaurants"
+          - "establishment count"
+        description: >
+          Total number of distinct restaurants.
+        expr: COUNT(DISTINCT RESTAURANT_ID)
+
+  # ---------------------------------------------------------------------------
+  # DIMENSION: Violation Types
+  # ---------------------------------------------------------------------------
+  - name: violation_types
+    description: >
+      Violation type reference dimension — one row per unique violation code.
+      Each code corresponds to a specific health code regulation.
+      Violations are classified as Critical or Not Critical.
+      Critical violations directly contribute to foodborne illness risk
+      (e.g., improper food temperatures, pest evidence, contamination).
+      Non-critical violations involve general sanitation and facility maintenance.
+    base_table:
+      database: RESTAURANT_INTELLIGENCE
+      schema: MARTS
+      table: DIM_VIOLATION_TYPE
+
+    dimensions:
+
+      - name: dim_violation_key
+        description: >
+          Surrogate key (MD5 hash) uniquely identifying each violation type.
+          Used internally for joining to the violations fact table.
+        expr: DIM_VIOLATION_KEY
+        data_type: VARCHAR
+        unique: true
+
+      - name: violation_code
+        synonyms:
+          - "violation ID"
+          - "code"
+          - "infraction code"
+        description: >
+          NYC DOHMH violation code (e.g., '04L' for rodent evidence,
+          '10F' for improper food temperature). Each code maps to a
+          specific section of the NYC Health Code Article 81.
+        expr: VIOLATION_CODE
+        data_type: VARCHAR
+        unique: true
+        sample_values:
+          - "10F"
+          - "04L"
+          - "06D"
+          - "02G"
+          - "04M"
+          - "10B"
+          - "02B"
+          - "06C"
+
+      - name: violation_description
+        synonyms:
+          - "violation detail"
+          - "violation text"
+          - "what was violated"
+          - "infraction description"
+        description: >
+          Full text description of the violation as defined by NYC DOHMH.
+          Describes the specific health code requirement that was not met.
+        expr: VIOLATION_DESCRIPTION
+        data_type: VARCHAR
+
+      - name: is_critical
+        synonyms:
+          - "critical flag"
+          - "is critical violation"
+          - "severity"
+          - "critical"
+        description: >
+          Whether this violation type is classified as Critical by NYC DOHMH.
+          Critical violations represent conditions most likely to contribute
+          to foodborne illness (e.g., pest activity, temperature abuse,
+          contamination). Critical violations carry higher point values
+          in the inspection scoring system (Condition I–III).
+        expr: IS_CRITICAL_VIOLATION
+        data_type: BOOLEAN
+
+      - name: criticality_label
+        synonyms:
+          - "criticality"
+          - "violation severity label"
+        description: >
+          Human-readable label: 'Critical' or 'Not Critical'.
+          Critical violations are public health hazards that directly
+          contribute to foodborne illness risk.
+        expr: CRITICALITY_LABEL
+        data_type: VARCHAR
+        is_enum: true
+        sample_values:
+          - "Critical"
+          - "Not Critical"
+
+  # ---------------------------------------------------------------------------
+  # DIMENSION: Calendar / Date
+  # ---------------------------------------------------------------------------
+  - name: dates
+    description: >
+      Calendar date dimension — one row per day from 2000-01-01 to 2030-12-31.
+      Supports time intelligence queries: year-over-year comparisons,
+      monthly trends, quarterly aggregations, day-of-week analysis.
+      Required for Snowflake Intelligence temporal reasoning.
+    base_table:
+      database: RESTAURANT_INTELLIGENCE
+      schema: MARTS
+      table: DIM_DATE
+
+    time_dimensions:
+
+      - name: calendar_date
+        synonyms:
+          - "date"
+          - "day"
+          - "inspection date"
+        description: >
+          Calendar date. Primary time dimension for all time-based analysis.
+          Join to fct_inspections and fct_violations via INSPECTION_DATE_KEY = DATE_KEY.
+        expr: CALENDAR_DATE
+        data_type: DATE
+        unique: true
+
+    dimensions:
+
+      - name: date_key
+        description: >
+          Integer surrogate key in YYYYMMDD format (e.g., 20250115 for Jan 15, 2025).
+          Used as the join key between fact tables and the date dimension.
+        expr: DATE_KEY
+        data_type: NUMBER
+        unique: true
+
+      - name: year_number
+        synonyms:
+          - "year"
+          - "calendar year"
+        description: >
+          Four-digit calendar year (e.g., 2024, 2025).
+        expr: YEAR_NUMBER
+        data_type: NUMBER
+        sample_values:
+          - "2019"
+          - "2020"
+          - "2021"
+          - "2022"
+          - "2023"
+          - "2024"
+          - "2025"
+
+      - name: quarter_label
+        synonyms:
+          - "quarter"
+          - "fiscal quarter"
+        description: >
+          Quarter label in 'Qn' format (e.g., 'Q1', 'Q2', 'Q3', 'Q4').
+          NYC DOHMH inspection scheduling varies by quarter — summer months
+          (Q3) typically see higher inspection volumes.
+        expr: QUARTER_LABEL
+        data_type: VARCHAR
+        is_enum: true
+        sample_values:
+          - "Q1"
+          - "Q2"
+          - "Q3"
+          - "Q4"
+
+      - name: month_name
+        synonyms:
+          - "month"
+          - "calendar month"
+        description: >
+          Full month name (e.g., 'January', 'February').
+        expr: MONTH_NAME
+        data_type: VARCHAR
+        is_enum: true
+        sample_values:
+          - "January"
+          - "February"
+          - "March"
+          - "April"
+          - "May"
+          - "June"
+          - "July"
+          - "August"
+          - "September"
+          - "October"
+          - "November"
+          - "December"
+
+      - name: month_number
+        synonyms:
+          - "month num"
+        description: >
+          Numeric month (1–12). Useful for ordering and seasonality analysis.
+        expr: MONTH_NUMBER
+        data_type: NUMBER
+
+      - name: day_of_week
+        synonyms:
+          - "weekday number"
+        description: >
+          Numeric day of week (1 = Monday through 7 = Sunday).
+          DOHMH inspections occur on business days; weekend inspections are rare.
+        expr: DAY_OF_WEEK
+        data_type: NUMBER
+
+      - name: day_name
+        synonyms:
+          - "weekday"
+          - "day of week"
+        description: >
+          Abbreviated day name (e.g., 'Mon', 'Tue', 'Wed').
+        expr: DAY_NAME_SHORT
+        data_type: VARCHAR
+        is_enum: true
+        sample_values:
+          - "Mon"
+          - "Tue"
+          - "Wed"
+          - "Thu"
+          - "Fri"
+          - "Sat"
+          - "Sun"
+
+      - name: is_weekend
+        synonyms:
+          - "weekend flag"
+          - "weekend"
+        description: >
+          TRUE if Saturday or Sunday. DOHMH inspections are rare on weekends.
+        expr: IS_WEEKEND
+        data_type: BOOLEAN
+
+      - name: year_month
+        synonyms:
+          - "month period"
+        description: >
+          Year-month as integer YYYYMM (e.g., 202501). Useful for monthly aggregation and trending.
+        expr: YEAR_MONTH
+        data_type: NUMBER
+
+      - name: year_quarter
+        synonyms:
+          - "quarter period"
+        description: >
+          Year-quarter as integer YYYYQ (e.g., 20251). Useful for quarterly aggregation.
+        expr: YEAR_QUARTER
+        data_type: NUMBER
+
+  # ---------------------------------------------------------------------------
+  # FACT: Inspections
+  # ---------------------------------------------------------------------------
+  - name: inspections
+    description: >
+      Inspection fact table — one row per restaurant × inspection date ×
+      inspection type × action combination. Each record captures the outcome
+      of a single DOHMH inspection event including the total score, grade
+      assigned, and violation counts.
+
+      Scoring system (penalty-based — higher is worse):
+        0–13 points → Grade A (passes)
+        14–27 points → Grade B (significant violations, triggers re-inspection)
+        28+ points → Grade C (fails, conditional permit)
+
+      Inspection cycle: Initial inspection → if score >= 14, a re-inspection
+      is scheduled. The grade may be assigned at re-inspection.
+      Establishments can also receive Grade Z (pending), N (not yet graded),
+      or P (pre-permit for new establishments).
+
+      Action field captures the enforcement outcome: violations cited,
+      establishment closed, re-opened, or no violations found.
+    base_table:
+      database: RESTAURANT_INTELLIGENCE
+      schema: MARTS
+      table: FCT_INSPECTIONS
+
+    dimensions:
+
+      - name: fct_inspection_key
+        description: >
+          Surrogate key (MD5 hash) uniquely identifying each inspection event.
+          Used internally for joining to the violations fact table.
+        expr: FCT_INSPECTION_KEY
+        data_type: VARCHAR
+        unique: true
+
+      - name: dim_restaurant_key
+        description: >
+          Foreign key to the restaurant dimension.
+        expr: DIM_RESTAURANT_KEY
+        data_type: VARCHAR
+
+      - name: inspection_date_key
+        description: >
+          Foreign key to the date dimension (YYYYMMDD integer format).
+        expr: INSPECTION_DATE_KEY
+        data_type: NUMBER
+
+      - name: inspection_type
+        synonyms:
+          - "type of inspection"
+          - "inspection category"
+          - "visit type"
+        description: >
+          Type of DOHMH inspection visit. Determines where in the inspection
+          cycle this event falls. Initial inspections are unannounced.
+          Re-inspections occur when the initial score is 14 or higher.
+        expr: INSPECTION_TYPE
+        data_type: VARCHAR
+        sample_values:
+          - "Cycle Inspection / Initial Inspection"
+          - "Cycle Inspection / Re-Inspection"
+          - "Pre-permit (Operational) / Initial Inspection"
+          - "Pre-permit (Operational) / Re-Inspection"
+          - "Smoke-Free Air Act / Initial Inspection"
+          - "Administrative Miscellaneous / Initial Inspection"
+          - "Calorie Posting / Initial Inspection"
+
+      - name: action
+        synonyms:
+          - "enforcement action"
+          - "inspection outcome"
+          - "result"
+          - "action taken"
+        description: >
+          Enforcement action taken as a result of this inspection.
+          'Violations were cited' is the most common outcome.
+          'Establishment Closed' indicates a public health hazard
+          requiring immediate closure (most severe enforcement action).
+          'No violations were recorded' indicates a clean inspection.
+        expr: ACTION
+        data_type: VARCHAR
+        sample_values:
+          - "Violations were cited in the following area(s)."
+          - "Establishment re-opened by DOHMH."
+          - "Establishment Closed by DOHMH. Violations were cited in the following area(s) and those cited during the current inspection visit."
+          - "No violations were recorded at the time of this inspection."
+          - "Establishment re-closed by DOHMH."
+
+      - name: grade
+        synonyms:
+          - "letter grade"
+          - "inspection grade"
+          - "rating"
+        description: >
+          Letter grade assigned by NYC DOHMH based on inspection score.
+          A = 0–13 points (best), B = 14–27, C = 28+ (worst).
+          Z = grade pending (re-inspection scheduled).
+          P = pre-permit (new establishment, not yet graded).
+          N = not yet graded (administrative status).
+          Restaurants must post their grade publicly at the entrance.
+        expr: GRADE
+        data_type: VARCHAR
+        is_enum: true
+        sample_values:
+          - "A"
+          - "B"
+          - "C"
+          - "Z"
+          - "P"
+          - "N"
+
+      - name: inspection_date
+        synonyms:
+          - "date of inspection"
+          - "visit date"
+          - "when inspected"
+        description: >
+          Date when the DOHMH inspection was conducted.
+          Inspections are unannounced — restaurants do not know in advance.
+        expr: INSPECTION_DATE
+        data_type: DATE
+
+      - name: grade_date
+        description: >
+          Date when the grade was officially assigned.
+          May differ from inspection_date for re-inspections and adjudications.
+        expr: GRADE_DATE
+        data_type: DATE
+
+      - name: passed_with_grade_a
+        synonyms:
+          - "passed inspection"
+          - "grade A flag"
+          - "clean inspection"
+        description: >
+          TRUE if the inspection resulted in a Grade A (score 0–13).
+          A Grade A means the restaurant passed with minimal violations.
+        expr: PASSED_WITH_GRADE_A
+        data_type: BOOLEAN
+
+      - name: has_critical_violation
+        synonyms:
+          - "has critical"
+          - "critical flag"
+        description: >
+          TRUE if at least one critical violation was cited during this inspection.
+          Critical violations pose direct food safety risks.
+        expr: HAS_CRITICAL_VIOLATION
+        data_type: BOOLEAN
+
+    facts:
+
+      - name: inspection_score
+        synonyms:
+          - "score"
+          - "violation score"
+          - "penalty points"
+          - "total points"
+        description: >
+          Total penalty points assessed during this inspection.
+          LOWER score = BETTER outcome. Score of 0 means no violations found.
+          Scoring is additive: each violation contributes points based on
+          its condition level (I through V). Critical violations (Conditions I–III)
+          carry higher point values than non-critical (Conditions IV–V).
+          Score determines the letter grade: A (0–13), B (14–27), C (28+).
+        expr: INSPECTION_SCORE
+        data_type: NUMBER
+
+      - name: total_violations
+        synonyms:
+          - "violation count"
+          - "number of violations"
+          - "violations found"
+        description: >
+          Total number of distinct violations cited during this inspection,
+          including both critical and non-critical violations.
+        expr: TOTAL_VIOLATIONS
+        data_type: NUMBER
+
+      - name: critical_violations
+        synonyms:
+          - "critical count"
+          - "critical violation count"
+          - "number of critical violations"
+        description: >
+          Number of critical violations cited during this inspection.
+          Critical violations are conditions most likely to cause foodborne illness:
+          improper food temperatures, pest evidence (rodents/insects),
+          contamination, inadequate handwashing facilities, etc.
+        expr: CRITICAL_VIOLATIONS
+        data_type: NUMBER
+
+      - name: non_critical_violations
+        synonyms:
+          - "non-critical count"
+          - "general violations"
+          - "minor violations"
+        description: >
+          Number of non-critical violations cited during this inspection.
+          Non-critical violations involve general sanitation, facility
+          maintenance, and administrative requirements.
+        expr: NON_CRITICAL_VIOLATIONS
+        data_type: NUMBER
+
+      - name: grade_sort_order
+        description: >
+          Numeric ordering for grades: A=1, B=2, C=3, N=4, P=5, Z=6.
+          Used for sorting and comparison — lower number = better grade.
+        expr: GRADE_SORT_ORDER
+        data_type: NUMBER
+        access_modifier: private_access
+
+    metrics:
+
+      - name: total_inspections
+        synonyms:
+          - "inspection count"
+          - "number of inspections"
+          - "inspections conducted"
+        description: >
+          Total number of inspection events. Each inspection is a distinct
+          DOHMH visit to a restaurant.
+        expr: COUNT(FCT_INSPECTION_KEY)
+
+      - name: average_score
+        synonyms:
+          - "avg score"
+          - "mean score"
+          - "average inspection score"
+          - "average penalty score"
+        description: >
+          Average inspection penalty score. LOWER is BETTER.
+          A value near 10 means most restaurants pass with Grade A.
+          A value above 20 indicates widespread compliance issues.
+        expr: AVG(INSPECTION_SCORE)
+
+      - name: median_score
+        synonyms:
+          - "median inspection score"
+        description: >
+          Median inspection penalty score. Less sensitive to outliers
+          than average. Useful for understanding typical inspection outcomes.
+        expr: MEDIAN(INSPECTION_SCORE)
+
+      - name: max_score
+        synonyms:
+          - "worst score"
+          - "highest score"
+          - "maximum penalty"
+        description: >
+          Maximum (worst) inspection score observed. Higher scores indicate
+          more severe violation findings.
+        expr: MAX(INSPECTION_SCORE)
+
+      - name: total_violations_cited
+        synonyms:
+          - "violations cited"
+          - "total violations"
+        description: >
+          Sum of all violations cited across inspections.
+        expr: SUM(TOTAL_VIOLATIONS)
+
+      - name: total_critical_violations_cited
+        synonyms:
+          - "critical violations total"
+          - "all critical violations"
+        description: >
+          Sum of critical violations cited across inspections.
+          Critical violations pose direct public health risk.
+        expr: SUM(CRITICAL_VIOLATIONS)
+
+      - name: grade_a_pass_rate
+        synonyms:
+          - "pass rate"
+          - "Grade A rate"
+          - "Grade A percentage"
+          - "compliance rate"
+        description: >
+          Percentage of inspections resulting in Grade A (score 0–13).
+          This is the primary compliance metric for NYC DOHMH.
+          A rate above 80% indicates strong borough/cuisine compliance.
+        expr: AVG(CASE WHEN PASSED_WITH_GRADE_A THEN 100.0 ELSE 0.0 END)
+
+      - name: grade_b_rate
+        synonyms:
+          - "Grade B percentage"
+        description: >
+          Percentage of inspections resulting in Grade B (score 14–27).
+          These restaurants have significant violations but remain open.
+        expr: >
+          SUM(CASE WHEN GRADE = 'B' THEN 1 ELSE 0 END) * 100.0
+          / NULLIF(COUNT(FCT_INSPECTION_KEY), 0)
+
+      - name: grade_c_rate
+        synonyms:
+          - "Grade C percentage"
+          - "failure rate"
+        description: >
+          Percentage of inspections resulting in Grade C (score 28+).
+          These restaurants failed and operate under a conditional permit.
+        expr: >
+          SUM(CASE WHEN GRADE = 'C' THEN 1 ELSE 0 END) * 100.0
+          / NULLIF(COUNT(FCT_INSPECTION_KEY), 0)
+
+      - name: closure_rate
+        synonyms:
+          - "establishment closure rate"
+          - "shutdown rate"
+        description: >
+          Percentage of inspections that resulted in the establishment
+          being closed by DOHMH. This is the most severe enforcement action,
+          triggered by imminent public health hazards.
+        expr: >
+          SUM(CASE WHEN ACTION ILIKE '%Establishment Closed%' THEN 1 ELSE 0 END) * 100.0
+          / NULLIF(COUNT(FCT_INSPECTION_KEY), 0)
+
+      - name: re_inspection_rate
+        synonyms:
+          - "reinspection rate"
+          - "re-inspection percentage"
+        description: >
+          Percentage of inspections that are re-inspections (as opposed to
+          initial inspections). A high re-inspection rate in a borough or
+          cuisine indicates systemic compliance challenges — restaurants
+          repeatedly failing initial inspections.
+        expr: >
+          SUM(CASE WHEN INSPECTION_TYPE ILIKE '%Re-Inspection%' THEN 1 ELSE 0 END) * 100.0
+          / NULLIF(COUNT(FCT_INSPECTION_KEY), 0)
+
+      - name: inspections_with_critical_pct
+        synonyms:
+         - "critical inspection rate"
+         - "percentage of inspections finding critical violations"
+         - "how often are critical violations found"
+        description: >
+          Percentage of inspection VISITS that found at least one critical violation.
+          Answers: "how likely is an inspector to find a critical issue?"
+          Small sample sizes (< 20 inspections) make this metric unreliable — 
+          a single cuisine with 2 inspections both flagged critical = 100%, 
+          which is statistically meaningless. Use critical_violation_share 
+          (violation-level) for cuisine breakdowns with small sample sizes.
+          Uses COUNT(DISTINCT) to remain accurate regardless of join path.
+        expr: >
+          COUNT(DISTINCT CASE WHEN HAS_CRITICAL_VIOLATION THEN FCT_INSPECTION_KEY END) * 100.0
+          / NULLIF(COUNT(DISTINCT FCT_INSPECTION_KEY), 0)
+
+      - name: avg_violations_per_inspection
+        synonyms:
+          - "violations per visit"
+          - "average violations"
+        description: >
+          Average number of violations cited per inspection.
+          Indicates the typical breadth of compliance issues found per visit.
+        expr: AVG(TOTAL_VIOLATIONS)
+
+      - name: avg_critical_violations_per_inspection
+        synonyms:
+          - "critical violations per visit"
+        description: >
+          Average number of critical violations cited per inspection.
+          A value above 1.0 signals persistent food safety risks.
+        expr: AVG(CRITICAL_VIOLATIONS)
+
+    filters:
+
+      - name: graded_inspections
+        synonyms:
+          - "inspections with final grades"
+        description: >
+          Only inspections that received a final letter grade (A, B, or C).
+          Excludes pending (Z), pre-permit (P), and not-yet-graded (N) records.
+        expr: "GRADE IN ('A', 'B', 'C')"
+
+      - name: initial_inspections
+        synonyms:
+          - "first inspections"
+        description: >
+          Only initial (first-time) inspections in the cycle.
+          Excludes re-inspections. Useful for measuring baseline compliance.
+        expr: "INSPECTION_TYPE ILIKE '%Initial Inspection%'"
+
+      - name: re_inspections
+        synonyms:
+          - "follow-up inspections"
+          - "reinspections"
+        description: >
+          Only re-inspections — follow-up visits after an initial score >= 14.
+        expr: "INSPECTION_TYPE ILIKE '%Re-Inspection%'"
+
+      - name: closures
+        synonyms:
+          - "closed establishments"
+          - "shutdowns"
+        description: >
+          Inspections that resulted in the establishment being closed by DOHMH.
+        expr: "ACTION ILIKE '%Establishment Closed%'"
+
+      - name: clean_inspections
+        synonyms:
+          - "no violations"
+          - "perfect inspections"
+        description: >
+          Inspections where no violations were recorded.
+        expr: "ACTION ILIKE '%No violations were recorded%'"
+
+      - name: recent_12_months
+        synonyms:
+          - "last year"
+          - "past 12 months"
+          - "recent"
+        description: >
+          Inspections conducted within the last 12 months.
+        expr: "inspections.INSPECTION_DATE >= DATEADD(month, -12, CURRENT_DATE())"
+
+  # ---------------------------------------------------------------------------
+  # FACT: Violations (granular)
+  # ---------------------------------------------------------------------------
+  - name: violations
+    description: >
+      Violation-level fact table — one row per individual violation cited
+      per inspection. This is the most granular table in the model.
+      Each row represents a specific health code violation found during
+      an inspection. The violation_count column is always 1 (additive),
+      enabling simple SUM aggregation for counting violations.
+      Join to violation_types for code descriptions and criticality,
+      join to inspections for the overall inspection outcome.
+    base_table:
+      database: RESTAURANT_INTELLIGENCE
+      schema: MARTS
+      table: FCT_VIOLATIONS
+
+    dimensions:
+
+      - name: fct_violation_key
+        description: >
+          Surrogate key (MD5 hash) uniquely identifying each violation citation.
+        expr: FCT_VIOLATION_KEY
+        data_type: VARCHAR
+        unique: true
+
+      - name: dim_restaurant_key
+        description: >
+          Foreign key to the restaurant dimension.
+        expr: DIM_RESTAURANT_KEY
+        data_type: VARCHAR
+
+      - name: dim_violation_key
+        description: >
+          Foreign key to the violation type dimension.
+        expr: DIM_VIOLATION_KEY
+        data_type: VARCHAR
+
+      - name: inspection_date_key
+        description: >
+          Foreign key to the date dimension (YYYYMMDD integer format).
+        expr: INSPECTION_DATE_KEY
+        data_type: NUMBER
+
+      - name: fct_inspection_key
+        description: >
+          Foreign key to the inspection fact table.
+        expr: FCT_INSPECTION_KEY
+        data_type: VARCHAR
+
+      - name: violation_code
+        description: >
+          NYC DOHMH violation code cited in this specific violation record.
+          Join to violation_types dimension for full description and criticality.
+        expr: VIOLATION_CODE
+        data_type: VARCHAR
+
+      - name: is_critical_violation
+        synonyms:
+          - "critical"
+          - "is critical"
+        description: >
+          Whether this specific violation is classified as Critical.
+          Denormalized from the violation type dimension for query convenience.
+        expr: IS_CRITICAL_VIOLATION
+        data_type: BOOLEAN
+
+      - name: inspection_type
+        description: >
+          Type of inspection during which this violation was cited.
+          Denormalized from the inspection fact for query convenience.
+        expr: INSPECTION_TYPE
+        data_type: VARCHAR
+
+      - name: action
+        description: >
+          Enforcement action associated with the inspection where this violation was cited.
+        expr: ACTION
+        data_type: VARCHAR
+
+      - name: inspection_date
+        description: >
+          Date of the inspection during which this violation was cited.
+        expr: INSPECTION_DATE
+        data_type: DATE
+
+    facts:
+
+      - name: violation_count
+        synonyms:
+          - "count"
+          - "occurrences"
+        description: >
+          Always 1 for each violation record. SUM this column to count
+          violations across any dimensional breakdown.
+        expr: VIOLATION_COUNT
+        data_type: NUMBER
+
+      - name: inspection_score
+        description: >
+          Total inspection score for the inspection in which this violation
+          was cited. Denormalized for convenience — the same score appears
+          on every violation row from the same inspection.
+        expr: INSPECTION_SCORE
+        data_type: NUMBER
+        access_modifier: private_access
+
+    metrics:
+
+      - name: total_violation_citations
+        synonyms:
+          - "violation count"
+          - "violations cited"
+          - "number of violations"
+        description: >
+          Total number of individual violation citations.
+          Each citation is one specific health code violation found
+          during one inspection of one restaurant.
+        expr: SUM(VIOLATION_COUNT)
+
+      - name: critical_violation_rate
+        synonyms:
+          - "critical hit rate"
+          - "critical violation rate"
+          - "critical violation share"
+          - "critical violation breakdown"
+          - "share of critical violations"
+          - "critical citation ratio"
+          - "critical vs non-critical split"
+          - "proportion of critical violations"
+        description: >
+          Percentage of violation citations that are critical (vs non-critical).
+          Answers: "of everything wrong found, how much of it is serious?"
+          More stable than inspection-level rate for small cuisine samples.
+          Mirrors the autopilot-generated query pattern: 
+          SUM(critical) / SUM(total) violations.
+          A share above 40% in a cuisine warrants targeted enforcement attention.
+        expr: >
+          SUM(CASE WHEN IS_CRITICAL_VIOLATION THEN VIOLATION_COUNT ELSE 0 END) * 100.0
+          / NULLIF(SUM(VIOLATION_COUNT), 0)
+
+      - name: critical_violation_citations
+        synonyms:
+          - "critical violations"
+          - "critical count"
+        description: >
+          Total number of critical violation citations.
+        expr: SUM(CASE WHEN IS_CRITICAL_VIOLATION THEN VIOLATION_COUNT ELSE 0 END)
+
+      - name: non_critical_violation_citations
+        synonyms:
+          - "non-critical violations"
+          - "general violation count"
+        description: >
+          Total number of non-critical violation citations.
+        expr: SUM(CASE WHEN NOT IS_CRITICAL_VIOLATION THEN VIOLATION_COUNT ELSE 0 END)
+
+      - name: distinct_violation_codes_cited
+        synonyms:
+          - "unique violations"
+          - "distinct violation types"
+        description: >
+          Number of distinct violation codes cited. Indicates breadth
+          of compliance issues — a high number means problems across
+          many different health code areas.
+        expr: COUNT(DISTINCT VIOLATION_CODE)
+
+    filters:
+
+      - name: critical_only
+        synonyms:
+          - "critical violations only"
+        description: >
+          Only critical violation citations (direct food safety risks).
+        expr: "IS_CRITICAL_VIOLATION = TRUE"
+
+      - name: non_critical_only
+        synonyms:
+          - "non-critical only"
+          - "general violations only"
+        description: >
+          Only non-critical violation citations (sanitation/maintenance issues).
+        expr: "IS_CRITICAL_VIOLATION = FALSE"
+
+      - name: recent_12_months
+        synonyms:
+          - "last year"
+          - "past 12 months"
+          - "recent"
+        description: >
+          Violations cited within the last 12 months.
+        expr: "violations.INSPECTION_DATE >= DATEADD(month, -12, CURRENT_DATE())"  
+
+
+# =============================================================================
+# RELATIONSHIPS
+# =============================================================================
+relationships:
+
+  - name: inspections_to_restaurants
+    left_table: inspections
+    right_table: restaurants
+    relationship_columns:
+      - left_column: DIM_RESTAURANT_KEY
+        right_column: DIM_RESTAURANT_KEY
+
+  - name: inspections_to_dates
+    left_table: inspections
+    right_table: dates
+    relationship_columns:
+      - left_column: INSPECTION_DATE_KEY
+        right_column: DATE_KEY
+
+  - name: violations_to_violation_types
+    left_table: violations
+    right_table: violation_types
+    relationship_columns:
+      - left_column: DIM_VIOLATION_KEY
+        right_column: DIM_VIOLATION_KEY
+
+  - name: violations_to_dates
+    left_table: violations
+    right_table: dates
+    relationship_columns:
+      - left_column: INSPECTION_DATE_KEY
+        right_column: DATE_KEY
+
+  - name: violations_to_inspections
+    left_table: violations
+    right_table: inspections
+    relationship_columns:
+      - left_column: FCT_INSPECTION_KEY
+        right_column: FCT_INSPECTION_KEY
+
+
+# =============================================================================
+# VERIFIED QUERIES
+# =============================================================================
+# Teach Cortex Analyst how to answer common regulator questions.
+# IMPORTANT: Verified queries must use logical table names (prefixed with __)
+# and logical column names — NOT the semantic view name or physical tables.
+# =============================================================================
+verified_queries:
+
+  # --- Grade Distribution & Compliance ---
+
+  - name: grade_distribution_by_borough
+    question: "What is the grade distribution by borough?"
+    use_as_onboarding_question: true
+    sql: |
+      SELECT
+        __restaurants.borough,
+        __inspections.grade,
+        COUNT(__inspections.fct_inspection_key) AS inspection_count
+      FROM __inspections
+      JOIN __restaurants
+        ON __inspections.dim_restaurant_key = __restaurants.dim_restaurant_key
+      WHERE __inspections.grade IN ('A', 'B', 'C')
+      GROUP BY __restaurants.borough, __inspections.grade
+      ORDER BY __restaurants.borough, __inspections.grade
+
+  - name: grade_a_pass_rate_by_borough
+    question: "What is the Grade A pass rate for each borough?"
+    use_as_onboarding_question: true
+    sql: |
+      SELECT
+        __restaurants.borough,
+        AVG(CASE WHEN __inspections.passed_with_grade_a THEN 100.0 ELSE 0.0 END) AS grade_a_pass_rate,
+        COUNT(__inspections.fct_inspection_key) AS total_inspections
+      FROM __inspections
+      JOIN __restaurants
+        ON __inspections.dim_restaurant_key = __restaurants.dim_restaurant_key
+      GROUP BY __restaurants.borough
+      ORDER BY grade_a_pass_rate DESC
+
+  # --- Critical Violations ---
+
+  - name: top_critical_violations
+    question: "What are the most frequently cited critical violations?"
+    use_as_onboarding_question: true
+    sql: |
+      SELECT
+        __violation_types.violation_code,
+        __violation_types.violation_description,
+        SUM(__violations.violation_count) AS citation_count
+      FROM __violations
+      JOIN __violation_types
+        ON __violations.dim_violation_key = __violation_types.dim_violation_key
+      WHERE __violations.is_critical_violation = TRUE
+      GROUP BY __violation_types.violation_code, __violation_types.violation_description
+      ORDER BY citation_count DESC
+      LIMIT 10
+
+  - name: critical_violations_by_cuisine
+    question: "Which cuisine types have the most critical violations?"
+    sql: |
+      SELECT
+        __restaurants.cuisine_type,
+        SUM(CASE WHEN __violations.is_critical_violation THEN __violations.violation_count ELSE 0 END) AS critical_citations,
+        SUM(__violations.violation_count) AS total_citations,
+        ROUND(critical_citations * 100.0 / NULLIF(total_citations, 0), 1) AS critical_share_pct
+      FROM __violations
+      JOIN __restaurants
+        ON __violations.dim_restaurant_key = __restaurants.dim_restaurant_key
+      GROUP BY __restaurants.cuisine_type
+      HAVING total_citations >= 100
+      ORDER BY critical_citations DESC
+      LIMIT 15
+
+  # --- Enforcement Actions ---
+
+  - name: closure_rate_by_borough
+    question: "What is the closure rate by borough?"
+    sql: |
+      SELECT
+        __restaurants.borough,
+        COUNT(__inspections.fct_inspection_key) AS total_inspections,
+        SUM(CASE WHEN __inspections.action ILIKE '%Establishment Closed%' THEN 1 ELSE 0 END) AS closures,
+        ROUND(closures * 100.0 / total_inspections, 2) AS closure_rate_pct
+      FROM __inspections
+      JOIN __restaurants
+        ON __inspections.dim_restaurant_key = __restaurants.dim_restaurant_key
+      GROUP BY __restaurants.borough
+      ORDER BY closure_rate_pct DESC
+
+  - name: re_inspection_rate_by_borough
+    question: "What is the re-inspection rate by borough this year?"
+    sql: |
+      SELECT
+        __restaurants.borough,
+        COUNT(__inspections.fct_inspection_key) AS total_inspections,
+        SUM(CASE WHEN __inspections.inspection_type ILIKE '%Re-Inspection%' THEN 1 ELSE 0 END) AS re_inspections,
+        ROUND(re_inspections * 100.0 / total_inspections, 2) AS re_inspection_rate_pct
+      FROM __inspections
+      JOIN __restaurants
+        ON __inspections.dim_restaurant_key = __restaurants.dim_restaurant_key
+      JOIN __dates
+        ON __inspections.inspection_date_key = __dates.date_key
+      WHERE __dates.calendar_date >= DATE_TRUNC('year', CURRENT_DATE())
+      GROUP BY __restaurants.borough
+      ORDER BY re_inspection_rate_pct DESC
+
+  # --- Time Intelligence ---
+
+  - name: monthly_inspection_trend
+    question: "Show me the monthly trend of inspections and average scores"
+    use_as_onboarding_question: true
+    sql: |
+      SELECT
+        __dates.year_number,
+        __dates.month_name,
+        __dates.month_number,
+        COUNT(__inspections.fct_inspection_key) AS inspections,
+        ROUND(AVG(__inspections.inspection_score), 1) AS avg_score,
+        ROUND(AVG(CASE WHEN __inspections.passed_with_grade_a THEN 100.0 ELSE 0.0 END), 1) AS grade_a_rate
+      FROM __inspections
+      JOIN __dates
+        ON __inspections.inspection_date_key = __dates.date_key
+      WHERE __dates.year_number >= YEAR(CURRENT_DATE()) - 1
+      GROUP BY __dates.year_number, __dates.month_name, __dates.month_number
+      ORDER BY __dates.year_number, __dates.month_number
+
+  - name: critical_violations_quarterly_trend
+    question: "What is the quarterly trend of critical violations in Brooklyn?"
+    sql: |
+      SELECT
+        __dates.year_number,
+        __dates.quarter_label,
+        SUM(CASE WHEN __violations.is_critical_violation THEN __violations.violation_count ELSE 0 END) AS critical_citations,
+        SUM(__violations.violation_count) AS total_citations,
+        ROUND(critical_citations * 100.0 / NULLIF(total_citations, 0), 1) AS critical_share_pct
+      FROM __violations
+      JOIN __restaurants
+        ON __violations.dim_restaurant_key = __restaurants.dim_restaurant_key
+      JOIN __dates
+        ON __violations.inspection_date_key = __dates.date_key
+      WHERE __restaurants.borough = 'Brooklyn'
+        AND __dates.year_number >= YEAR(CURRENT_DATE()) - 2
+      GROUP BY __dates.year_number, __dates.quarter_label
+      ORDER BY __dates.year_number, __dates.quarter_label
+
+  # --- Geospatial ---
+
+  - name: violation_hotspots_by_zipcode
+    question: "Which zip codes have the highest concentration of critical violations?"
+    sql: |
+      SELECT
+        __restaurants.zipcode,
+        __restaurants.borough,
+        COUNT(DISTINCT __restaurants.restaurant_id) AS restaurants,
+        SUM(CASE WHEN __violations.is_critical_violation THEN __violations.violation_count ELSE 0 END) AS critical_citations,
+        ROUND(critical_citations * 1.0 / NULLIF(restaurants, 0), 1) AS critical_per_restaurant
+      FROM __violations
+      JOIN __restaurants
+        ON __violations.dim_restaurant_key = __restaurants.dim_restaurant_key
+      JOIN __dates
+        ON __violations.inspection_date_key = __dates.date_key
+      WHERE __dates.calendar_date >= DATEADD(month, -12, CURRENT_DATE())
+        AND __restaurants.zipcode IS NOT NULL
+      GROUP BY __restaurants.zipcode, __restaurants.borough
+      HAVING restaurants >= 20
+      ORDER BY critical_per_restaurant DESC
+      LIMIT 20
+
+  # --- Restaurant-Level Risk ---
+
+  - name: highest_risk_restaurants
+    question: "Which restaurants have the worst inspection scores this year?"
+    sql: |
+      SELECT
+        __restaurants.restaurant_name,
+        __restaurants.borough,
+        __restaurants.cuisine_type,
+        __restaurants.street_address,
+        MAX(__inspections.inspection_score) AS worst_score,
+        ROUND(AVG(__inspections.inspection_score), 1) AS avg_score,
+        SUM(__inspections.critical_violations) AS total_critical,
+        COUNT(__inspections.fct_inspection_key) AS inspections_this_year
+      FROM __inspections
+      JOIN __restaurants
+        ON __inspections.dim_restaurant_key = __restaurants.dim_restaurant_key
+      JOIN __dates
+        ON __inspections.inspection_date_key = __dates.date_key
+      WHERE __dates.calendar_date >= DATE_TRUNC('year', CURRENT_DATE())
+        AND __inspections.inspection_score IS NOT NULL
+      GROUP BY __restaurants.restaurant_name, __restaurants.borough,
+               __restaurants.cuisine_type, __restaurants.street_address
+      HAVING inspections_this_year >= 2
+      ORDER BY avg_score DESC
+      LIMIT 20
+
+  - name: repeat_offenders
+    question: "Which restaurants have been closed more than once?"
+    sql: |
+      SELECT
+        __restaurants.restaurant_name,
+        __restaurants.borough,
+        __restaurants.cuisine_type,
+        __restaurants.street_address,
+        COUNT(__inspections.fct_inspection_key) AS closure_count
+      FROM __inspections
+      JOIN __restaurants
+        ON __inspections.dim_restaurant_key = __restaurants.dim_restaurant_key
+      WHERE __inspections.action ILIKE '%Establishment Closed%'
+      GROUP BY __restaurants.restaurant_name, __restaurants.borough,
+               __restaurants.cuisine_type, __restaurants.street_address
+      HAVING closure_count > 1
+      ORDER BY closure_count DESC
+      LIMIT 20
+
+  # --- Day-of-Week Analysis ---
+
+  - name: inspections_by_day_of_week
+    question: "On which days of the week are most inspections conducted?"
+    sql: |
+      SELECT
+        __dates.day_name,
+        __dates.day_of_week,
+        COUNT(__inspections.fct_inspection_key) AS inspections,
+        ROUND(AVG(__inspections.inspection_score), 1) AS avg_score
+      FROM __inspections
+      JOIN __dates
+        ON __inspections.inspection_date_key = __dates.date_key
+      WHERE __dates.year_number = YEAR(CURRENT_DATE())
+      GROUP BY __dates.day_name, __dates.day_of_week
+      ORDER BY __dates.day_of_week

@@ -52,6 +52,13 @@ COLUMN_ORDER = [
     "community_board", "council_district", "census_tract", "bin", "bbl", "nta",
 ]
 
+# OpenLineage namespace identifiers
+OL_JOB_NAMESPACE  = "nyc_restaurant_intelligence"
+OL_JOB_NAME       = "load_inspections"
+OL_INPUT_NS       = "https://data.cityofnewyork.us"
+OL_INPUT_NAME     = "Health/NYC-Restaurant-Inspection-Results/gv23-aida"
+OL_SOCRATA_URI    = "https://data.cityofnewyork.us/resource/gv23-aida.json"
+
 
 # ── Socrata fetch ─────────────────────────────────────────────────────────────
 
@@ -178,7 +185,209 @@ def load_to_snowflake(records: list[dict]) -> None:
 
     finally:
         cur.close()
-        conn.close()
+
+    # Return the open connection — OpenLineage emitter reuses the session token
+    return conn
+
+# ── OpenLineage ───────────────────────────────────────────────────────────────
+
+def _get_snowflake_token(conn: snowflake.connector.SnowflakeConnection) -> str | None:
+    """
+    Retrieves the current session token from an open Snowflake connector
+    connection. Used to authenticate the REST call to the lineage endpoint.
+
+    Returns None if the token cannot be obtained (non-blocking).
+    """
+    try:
+        # The connector stores the session token in the REST handler
+        return conn.rest.token
+    except Exception as exc:
+        print(f"   ⚠  Could not retrieve session token: {exc}")
+        return None
+
+
+def build_openlineage_event(
+    run_id: str,
+    event_time: str,
+    row_count: int,
+) -> dict:
+    """
+    Builds an OpenLineage COMPLETE event declaring:
+      - Input:  Socrata API (NYC Open Data)  →  external source
+      - Output: RESTAURANT_INTELLIGENCE.RAW.INSPECTIONS_RAW  →  Snowflake table
+
+    Spec: https://openlineage.io/spec/1-0-5/OpenLineage.json
+    """
+    output_namespace = (
+        f"snowflake://{config.SNOWFLAKE_ACCOUNT}.snowflakecomputing.com"
+    )
+    output_name = (
+        f"{config.SNOWFLAKE_DATABASE}.{config.SNOWFLAKE_SCHEMA}.{config.SNOWFLAKE_TABLE}"
+    )
+
+    return {
+        "eventType":  "COMPLETE",
+        "eventTime":  event_time,
+        "schemaURL":  "https://openlineage.io/spec/1-0-5/OpenLineage.json#/definitions/RunEvent",
+        "run": {
+            "runId": run_id,
+            "facets": {
+                "processing_engine": {
+                    "_producer": f"{OL_JOB_NAMESPACE}/{OL_JOB_NAME}",
+                    "_schemaURL": "https://openlineage.io/spec/facets/1-1-1/ProcessingEngineRunFacet.json",
+                    "name":    "snowflake-connector-python",
+                    "version": snowflake.connector.__version__,
+                }
+            },
+        },
+        "job": {
+            "namespace": OL_JOB_NAMESPACE,
+            "name":      OL_JOB_NAME,
+            "facets": {
+                "documentation": {
+                    "_producer": f"{OL_JOB_NAMESPACE}/{OL_JOB_NAME}",
+                    "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DocumentationJobFacet.json",
+                    "description": (
+                        "Full TRUNCATE + reload of NYC DOHMH restaurant inspection "
+                        "records from the Socrata API into Snowflake RAW schema."
+                    ),
+                },
+                "sourceCode": {
+                    "_producer": f"{OL_JOB_NAMESPACE}/{OL_JOB_NAME}",
+                    "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/SourceCodeLocationJobFacet.json",
+                    "type": "git",
+                    "url":  "https://github.com/vincevv017/nyc-restaurant-intelligence",
+                },
+            },
+        },
+        "inputs": [
+            {
+                "namespace": OL_INPUT_NS,
+                "name":      OL_INPUT_NAME,
+                "facets": {
+                    "dataSource": {
+                        "_producer": f"{OL_JOB_NAMESPACE}/{OL_JOB_NAME}",
+                        "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DatasourceDatasetFacet.json",
+                        "name": "NYC Open Data — DOHMH Restaurant Inspection Results",
+                        "uri":  OL_SOCRATA_URI,
+                    },
+                    "dataQuality": {
+                        "_producer": f"{OL_JOB_NAMESPACE}/{OL_JOB_NAME}",
+                        "_schemaURL": "https://openlineage.io/spec/facets/1-0-1/DataQualityMetricsInputDatasetFacet.json",
+                        "rowCount": row_count,
+                    },
+                    "documentation": {
+                        "_producer": f"{OL_JOB_NAMESPACE}/{OL_JOB_NAME}",
+                        "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/DocumentationDatasetFacet.json",
+                        "description": (
+                            "NYC DOHMH restaurant inspection results. Updated daily by NYC "
+                            "Open Data via the Socrata API. Includes inspection scores, grades, "
+                            "violation codes, and enforcement actions for ~250k records."
+                        ),
+                    },
+                },
+            }
+        ],
+        "outputs": [
+            {
+                "namespace": output_namespace,
+                "name":      output_name,
+                "facets": {
+                    "schema": {
+                        "_producer": f"{OL_JOB_NAMESPACE}/{OL_JOB_NAME}",
+                        "_schemaURL": "https://openlineage.io/spec/facets/1-1-0/SchemaDatasetFacet.json",
+                        "fields": [
+                            {"name": col.upper(), "type": "VARCHAR"}
+                            for col in COLUMN_ORDER
+                        ] + [
+                            {"name": "LOADED_AT", "type": "TIMESTAMP_TZ"},
+                        ],
+                    },
+                    "outputStatistics": {
+                        "_producer": f"{OL_JOB_NAMESPACE}/{OL_JOB_NAME}",
+                        "_schemaURL": "https://openlineage.io/spec/facets/1-0-2/OutputStatisticsOutputDatasetFacet.json",
+                        "rowCount": row_count,
+                    },
+                    "lifecycleStateChange": {
+                        "_producer": f"{OL_JOB_NAMESPACE}/{OL_JOB_NAME}",
+                        "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/LifecycleStateChangeDatasetFacet.json",
+                        "lifecycleStateChange": "OVERWRITE",
+                    },
+                },
+            }
+        ],
+    }
+
+
+def emit_openlineage_event(
+    conn: snowflake.connector.SnowflakeConnection,
+    row_count: int,
+    run_id: str,
+    event_time: str,
+) -> None:
+    """
+    Posts an OpenLineage COMPLETE event to Snowflake's external lineage endpoint.
+
+    Endpoint (announced January 16, 2026):
+      POST https://<account>.snowflakecomputing.com/api/v2/lineage/openlineage/v1/lineage
+
+    Authentication: Snowflake session token (Bearer), reusing the open connector
+    session — no additional credential required.
+
+    This call is fire-and-forget: failures are logged as warnings and do not
+    interrupt the pipeline. Trial accounts may not have the endpoint enabled.
+    """
+    token = _get_snowflake_token(conn)
+    if not token:
+        print("   ⚠  Skipping OpenLineage emission — session token unavailable.")
+        return
+
+    endpoint = (
+        f"https://{config.SNOWFLAKE_ACCOUNT}.snowflakecomputing.com"
+        "/api/v2/lineage/openlineage/v1/lineage"
+    )
+    headers = {
+        "Authorization":  f"Bearer {token}",
+        "Content-Type":   "application/json",
+        "Accept":         "application/json",
+        "X-Snowflake-Authorization-Token-Type": "OAUTH",
+    }
+    payload = build_openlineage_event(run_id, event_time, row_count)
+
+    print("\n📡 Emitting OpenLineage event …")
+    print(f"   Endpoint : {endpoint}")
+    print(f"   Run ID   : {run_id}")
+    print(f"   Source   : {OL_INPUT_NS}/{OL_INPUT_NAME}")
+    print(f"   Target   : {config.SNOWFLAKE_DATABASE}.{config.SNOWFLAKE_SCHEMA}.{config.SNOWFLAKE_TABLE}")
+
+    try:
+        resp = requests.post(
+            endpoint,
+            headers=headers,
+            json=payload,
+            timeout=15,
+        )
+        if resp.status_code in (200, 201, 202):
+            print(f"   ✅ OpenLineage event accepted (HTTP {resp.status_code})")
+            print(
+                "   → Lineage graph in Snowsight: "
+                "Governance → Lineage → INSPECTIONS_RAW"
+            )
+        else:
+            print(
+                f"   ⚠  OpenLineage endpoint returned HTTP {resp.status_code}: "
+                f"{resp.text[:200]}"
+            )
+    except requests.exceptions.ConnectionError:
+        print(
+            "   ⚠  Could not reach lineage endpoint "
+            "(network block or endpoint not enabled on this account)."
+        )
+    except requests.exceptions.Timeout:
+        print("   ⚠  OpenLineage request timed out — continuing.")
+    except Exception as exc:
+        print(f"   ⚠  OpenLineage emission failed: {exc}")
+
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 

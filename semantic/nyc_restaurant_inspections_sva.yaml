@@ -1,0 +1,640 @@
+name: NYC_RESTAURANT_INSPECTION_SVA
+description: |-
+  NYC Department of Health (DOHMH) restaurant inspection analytics across all
+  five boroughs. Covers inspection outcomes, violation citations, restaurant
+  profiles, and enforcement actions. Inspection scores are penalty-based:
+  higher score means more violations and a worse outcome. Grade A (0-13 points)
+  means the restaurant passes. Grade B (14-27) indicates significant violations
+  and triggers a re-inspection. Grade C (28+ points) means the restaurant fails.
+  Data is refreshed daily from NYC Open Data via the Socrata API.
+tables:
+  - name: FCT_INSPECTIONS
+    description: The table contains records of restaurant health inspections. Each record represents a single inspection event and includes details about the inspection type, outcome, grading information, and violation counts categorized by severity level.
+    base_table:
+      database: RESTAURANT_INTELLIGENCE
+      schema: MARTS
+      table: FCT_INSPECTIONS
+    dimensions:
+      - name: ACTION
+        description: The action taken by the health department as a result of the inspection.
+        expr: ACTION
+        data_type: VARCHAR
+        sample_values:
+          - No violations were recorded at the time of this inspection.
+          - Violations were cited in the following area(s).
+          - Establishment re-opened by DOHMH.
+      - name: CRITICAL_VIOLATIONS
+        description: The number of critical violations found during the restaurant inspection.
+        expr: CRITICAL_VIOLATIONS
+        data_type: NUMBER
+        sample_values:
+          - '1'
+          - '2'
+          - '0'
+      - name: DIM_RESTAURANT_KEY
+        description: Surrogate key linking to the restaurant dimension table.
+        expr: DIM_RESTAURANT_KEY
+        data_type: VARCHAR
+        sample_values:
+          - 739a35dfab589124ec684c1cd0844b51
+          - 74693f9cfd13f582cd918ae1a642fbaa
+          - 4604fa8784ccf11b35a3853609deeea7
+      - name: GRADE
+        description: The letter grade assigned to the restaurant following a health inspection.
+        expr: GRADE
+        data_type: VARCHAR
+        sample_values:
+          - A
+          - B
+          - 'N'
+      - name: GRADE_SORT_ORDER
+        description: The sort order for inspection grades used for ranking or ordering purposes.
+        expr: GRADE_SORT_ORDER
+        data_type: NUMBER
+        sample_values:
+          - '3'
+          - '2'
+      - name: HAS_CRITICAL_VIOLATION
+        description: Indicates whether the inspection identified any critical violations.
+        expr: HAS_CRITICAL_VIOLATION
+        data_type: BOOLEAN
+        sample_values:
+          - 'TRUE'
+          - 'FALSE'
+      - name: INSPECTION_DATE_KEY
+        description: The date key representing when the restaurant inspection occurred.
+        expr: INSPECTION_DATE_KEY
+        data_type: NUMBER
+        sample_values:
+          - '20230131'
+          - '20230713'
+          - '20211001'
+      - name: INSPECTION_SCORE
+        description: The numerical score assigned to a restaurant during a health or safety inspection.
+        expr: INSPECTION_SCORE
+        data_type: NUMBER
+        sample_values:
+          - '60'
+          - '2'
+          - '52'
+      - name: INSPECTION_TYPE
+        description: The type of inspection conducted and whether it was an initial inspection or a re-inspection.
+        expr: INSPECTION_TYPE
+        data_type: VARCHAR
+        sample_values:
+          - Administrative Miscellaneous / Re-inspection
+          - Administrative Miscellaneous / Initial Inspection
+          - Cycle Inspection / Initial Inspection
+      - name: NON_CRITICAL_VIOLATIONS
+        description: The number of non-critical violations found during the restaurant inspection.
+        expr: NON_CRITICAL_VIOLATIONS
+        data_type: NUMBER
+        sample_values:
+          - '0'
+          - '1'
+          - '2'
+      - name: PASSED_WITH_GRADE_A
+        description: Indicates whether the inspection was passed with a grade A.
+        expr: PASSED_WITH_GRADE_A
+        data_type: BOOLEAN
+        sample_values:
+          - 'FALSE'
+          - 'TRUE'
+      - name: RESTAURANT_ID
+        description: Unique identifier for each restaurant in the inspection records.
+        expr: RESTAURANT_ID
+        data_type: VARCHAR
+        sample_values:
+          - '50159638'
+          - '40388269'
+          - '41489741'
+      - name: TOTAL_VIOLATIONS
+        description: The total number of violations found during the inspection.
+        expr: TOTAL_VIOLATIONS
+        data_type: NUMBER
+        sample_values:
+          - '1'
+          - '5'
+          - '3'
+    time_dimensions:
+      - name: GRADE_DATE
+        description: The date when the inspection grade was assigned to the restaurant.
+        expr: GRADE_DATE
+        data_type: DATE
+        sample_values:
+          - '2025-12-30'
+          - '2025-08-04'
+          - '2023-12-01'
+      - name: INSPECTION_DATE
+        description: The date when the restaurant inspection was conducted.
+        expr: INSPECTION_DATE
+        data_type: DATE
+        sample_values:
+          - '2025-08-22'
+          - '2022-09-14'
+          - '2022-02-14'
+  - name: DIM_RESTAURANT
+    description: The table contains records of restaurants with their identifying information and location details. Each record represents a single restaurant and includes geographic information such as borough and neighborhood, contact information, and cuisine type.
+    base_table:
+      database: RESTAURANT_INTELLIGENCE
+      schema: MARTS
+      table: DIM_RESTAURANT
+    dimensions:
+      - name: BOROUGH
+        description: The borough where the restaurant is located.
+        expr: BOROUGH
+        data_type: VARCHAR
+        sample_values:
+          - Manhattan
+          - Queens
+          - Brooklyn
+      - name: BUILDING_NUMBER
+        description: The building number portion of the restaurant's physical address.
+        expr: BUILDING_NUMBER
+        data_type: VARCHAR
+        sample_values:
+          - '185'
+          - 31-06
+          - '85'
+      - name: CUISINE_DESCRIPTION
+        description: The type of cuisine served by the restaurant.
+        expr: CUISINE_DESCRIPTION
+        data_type: VARCHAR
+        sample_values:
+          - Jewish/Kosher
+          - French
+      - name: DIM_RESTAURANT_KEY
+        description: A unique identifier for each restaurant in the dimension table.
+        expr: DIM_RESTAURANT_KEY
+        data_type: VARCHAR
+        sample_values:
+          - 54df53c3380ed8ffc7196c2bab7cccce
+          - dda2cd578ec8b8bf86832b3b62dd19f8
+          - 5f7c5a5b913216aeecca5271b4b9e09a
+      - name: NEIGHBORHOOD_CODE
+        description: Alphanumeric codes that uniquely identify neighborhoods or geographic areas where restaurants are located.
+        expr: NEIGHBORHOOD_CODE
+        data_type: VARCHAR
+        sample_values:
+          - QN53
+          - BK90
+          - MN09
+      - name: PHONE
+        description: Restaurant phone numbers.
+        expr: PHONE
+        data_type: VARCHAR
+        sample_values:
+          - '3475334673'
+          - '3478429221'
+          - '7182957272'
+      - name: RESTAURANT_ID
+        description: Unique identifier for each restaurant in the system.
+        expr: RESTAURANT_ID
+        data_type: VARCHAR
+        sample_values:
+          - '50135410'
+          - '50181134'
+          - '50176042'
+      - name: RESTAURANT_NAME
+        description: The name of the restaurant.
+        expr: RESTAURANT_NAME
+        data_type: VARCHAR
+        sample_values:
+          - RED POKE
+          - POPBAR POPLAB
+          - LA COCINITA MIA
+      - name: STREET_ADDRESS
+        description: The street address of the restaurant location.
+        expr: STREET_ADDRESS
+        data_type: VARCHAR
+        sample_values:
+          - 1209 Nostrand Avenue
+          - 192 Union Avenue
+          - 31-31 Steinway Street
+      - name: STREET_NAME
+        description: Street names where restaurants are located.
+        expr: STREET_NAME
+        data_type: VARCHAR
+        sample_values:
+          - Union Avenue
+          - Greenwich Street
+          - West   38 Street
+      - name: ZIPCODE
+        description: Postal ZIP codes for restaurant locations.
+        expr: ZIPCODE
+        data_type: VARCHAR
+        sample_values:
+          - '11375'
+          - '10012'
+          - '11420'
+    facts:
+      - name: LATITUDE
+        description: The geographic latitude coordinate of the restaurant location.
+        expr: LATITUDE
+        data_type: NUMBER
+        sample_values:
+          - '40.7338402'
+          - '40.6871376'
+          - '40.8095204'
+      - name: LONGITUDE
+        description: The geographic longitude coordinate of the restaurant location.
+        expr: LONGITUDE
+        data_type: NUMBER
+        sample_values:
+          - '-73.8897410'
+          - '-73.9775273'
+          - '-73.9487084'
+    primary_key:
+      columns:
+        - DIM_RESTAURANT_KEY
+  - name: DIM_DATE
+    description: The table contains records representing individual calendar dates with their associated temporal attributes. Each record includes hierarchical time period classifications and indicators for special date characteristics such as weekends and month boundaries.
+    base_table:
+      database: RESTAURANT_INTELLIGENCE
+      schema: MARTS
+      table: DIM_DATE
+    dimensions:
+      - name: DATE_KEY
+        description: Date identifier in numeric format serving as the primary key for the date dimension table.
+        expr: DATE_KEY
+        data_type: NUMBER
+        sample_values:
+          - '20000102'
+          - '20000607'
+          - '20000528'
+      - name: DAY_NAME_SHORT
+        description: The abbreviated name of the day of the week.
+        expr: DAY_NAME_SHORT
+        data_type: VARCHAR
+        sample_values:
+          - Mon
+          - Sat
+          - Sun
+      - name: DAY_OF_MONTH
+        description: The day of the month as a numeric value.
+        expr: DAY_OF_MONTH
+        data_type: NUMBER
+        sample_values:
+          - '1'
+          - '3'
+          - '2'
+      - name: DAY_OF_WEEK
+        description: The day of the week represented as a numeric value.
+        expr: DAY_OF_WEEK
+        data_type: NUMBER
+        sample_values:
+          - '6'
+          - '1'
+          - '0'
+      - name: DAY_OF_YEAR
+        description: The sequential day number within a calendar year ranging from 1 to 366.
+        expr: DAY_OF_YEAR
+        data_type: NUMBER
+        sample_values:
+          - '127'
+          - '1'
+          - '146'
+      - name: IS_MONTH_END
+        description: Indicates whether the date falls on the last day of a month.
+        expr: IS_MONTH_END
+        data_type: BOOLEAN
+        sample_values:
+          - 'FALSE'
+          - 'TRUE'
+      - name: IS_MONTH_START
+        description: Indicates whether the date represents the first day of a month.
+        expr: IS_MONTH_START
+        data_type: BOOLEAN
+        sample_values:
+          - 'FALSE'
+          - 'TRUE'
+      - name: IS_WEEKEND
+        description: Indicates whether the date falls on a weekend.
+        expr: IS_WEEKEND
+        data_type: BOOLEAN
+        sample_values:
+          - 'FALSE'
+          - 'TRUE'
+      - name: MONTH_NAME
+        description: The name of the month.
+        expr: MONTH_NAME
+        data_type: VARCHAR
+        sample_values:
+          - January
+          - March
+          - February
+      - name: MONTH_NUMBER
+        description: The numeric representation of the month in a calendar year.
+        expr: MONTH_NUMBER
+        data_type: NUMBER
+        sample_values:
+          - '3'
+          - '2'
+          - '1'
+      - name: MONTH_SHORT
+        description: The abbreviated three-letter name of the month.
+        expr: MONTH_SHORT
+        data_type: VARCHAR
+        sample_values:
+          - Jan
+          - Mar
+          - Feb
+      - name: QUARTER_LABEL
+        description: The quarter of the year designation.
+        expr: QUARTER_LABEL
+        data_type: VARCHAR
+        sample_values:
+          - Q3
+          - Q2
+          - Q1
+      - name: QUARTER_NUMBER
+        description: The quarter of the year represented as a number from 1 to 4.
+        expr: QUARTER_NUMBER
+        data_type: NUMBER
+        sample_values:
+          - '1'
+          - '3'
+          - '2'
+      - name: WEEK_OF_YEAR
+        description: The week number within the calendar year.
+        expr: WEEK_OF_YEAR
+        data_type: NUMBER
+        sample_values:
+          - '2'
+          - '22'
+          - '52'
+      - name: YEAR_MONTH
+        description: The year and month of the date.
+        expr: YEAR_MONTH
+        data_type: NUMBER
+        sample_values:
+          - '200001'
+          - '202303'
+          - '202502'
+      - name: YEAR_NUMBER
+        description: The calendar year as a four-digit number.
+        expr: YEAR_NUMBER
+        data_type: NUMBER
+        sample_values:
+          - '2002'
+          - '2000'
+          - '2001'
+      - name: YEAR_QUARTER
+        description: The year and quarter combination representing a specific three-month period within a calendar year.
+        expr: YEAR_QUARTER
+        data_type: NUMBER
+        sample_values:
+          - '200002'
+          - '200003'
+          - '202601'
+    time_dimensions:
+      - name: CALENDAR_DATE
+        description: Calendar dates used for time-based analysis and reporting in the restaurant intelligence system.
+        expr: CALENDAR_DATE
+        data_type: DATE
+        sample_values:
+          - '2000-01-29'
+          - '2000-02-02'
+          - '2000-06-21'
+    primary_key:
+      columns:
+        - DATE_KEY
+  - name: FCT_VIOLATIONS
+    description: The table contains records of restaurant health and safety violations identified during inspections. Each record represents a specific violation found at a restaurant, including details about the inspection timing and type, the nature of the violation, criticality status, and associated scores and actions taken.
+    base_table:
+      database: RESTAURANT_INTELLIGENCE
+      schema: MARTS
+      table: FCT_VIOLATIONS
+    dimensions:
+      - name: ACTION
+        description: The regulatory action taken by the health department in response to identified violations.
+        expr: ACTION
+        data_type: VARCHAR
+        sample_values:
+          - No violations were recorded at the time of this inspection.
+          - Establishment re-opened by DOHMH.
+          - Violations were cited in the following area(s).
+      - name: DIM_RESTAURANT_KEY
+        description: Surrogate key linking to the restaurant dimension table.
+        expr: DIM_RESTAURANT_KEY
+        data_type: VARCHAR
+        sample_values:
+          - 25da7acddc62f119be29c87650b55c6a
+          - 7e905d1929e0dfb23ca66c1cde8dcf03
+          - 87167c1feb647ca8cae3e2e9d35c15f0
+      - name: DIM_VIOLATION_KEY
+        description: Unique identifier for each violation record in the dimension table.
+        expr: DIM_VIOLATION_KEY
+        data_type: VARCHAR
+        sample_values:
+          - 747bff46022a44dda38acf59ed6ea815
+          - 3ad39daa2a986b0186d55490dd48e47b
+          - 45de708fcb693a3ccaecbaf8c526ab02
+      - name: INSPECTION_DATE_KEY
+        description: The date key representing when the inspection occurred.
+        expr: INSPECTION_DATE_KEY
+        data_type: NUMBER
+        sample_values:
+          - '20240509'
+          - '20250201'
+          - '20220126'
+      - name: INSPECTION_SCORE
+        description: The numerical score assigned to a restaurant during a health inspection.
+        expr: INSPECTION_SCORE
+        data_type: NUMBER
+        sample_values:
+          - '50'
+          - '38'
+          - '11'
+      - name: INSPECTION_TYPE
+        description: The type of inspection conducted at the restaurant establishment.
+        expr: INSPECTION_TYPE
+        data_type: VARCHAR
+        sample_values:
+          - Cycle Inspection / Compliance Inspection
+          - Administrative Miscellaneous / Second Compliance Inspection
+          - Pre-permit (Operational) / Compliance Inspection
+      - name: IS_CRITICAL_VIOLATION
+        description: Indicates whether the violation is classified as critical.
+        expr: IS_CRITICAL_VIOLATION
+        data_type: BOOLEAN
+        sample_values:
+          - 'TRUE'
+          - 'FALSE'
+      - name: RESTAURANT_ID
+        description: Unique identifier for the restaurant associated with the violation.
+        expr: RESTAURANT_ID
+        data_type: VARCHAR
+        sample_values:
+          - '40781869'
+          - '50116166'
+          - '50043035'
+      - name: VIOLATION_CODE
+        description: Health or safety violation codes assigned to restaurant inspection infractions.
+        expr: VIOLATION_CODE
+        data_type: VARCHAR
+        sample_values:
+          - 22G
+          - 10G
+          - 20-01
+      - name: VIOLATION_COUNT
+        description: The number of violations recorded for a restaurant inspection or compliance event.
+        expr: VIOLATION_COUNT
+        data_type: NUMBER
+        sample_values:
+          - '1'
+    time_dimensions:
+      - name: INSPECTION_DATE
+        description: The date when the restaurant inspection was conducted.
+        expr: INSPECTION_DATE
+        data_type: DATE
+        sample_values:
+          - '2024-06-05'
+          - '2020-02-28'
+          - '2022-07-21'
+  - name: DIM_VIOLATION_TYPE
+    description: The table contains records of violation types used for classification and reference purposes. Each record represents a distinct violation category with descriptive information and criticality indicators.
+    base_table:
+      database: RESTAURANT_INTELLIGENCE
+      schema: MARTS
+      table: DIM_VIOLATION_TYPE
+    dimensions:
+      - name: CRITICALITY_LABEL
+        description: The criticality level classification of a violation type.
+        expr: CRITICALITY_LABEL
+        data_type: VARCHAR
+        sample_values:
+          - Not Applicable
+          - Critical
+          - Not Critical
+      - name: DIM_VIOLATION_KEY
+        description: Unique identifier for each violation type dimension record.
+        expr: DIM_VIOLATION_KEY
+        data_type: VARCHAR
+        sample_values:
+          - bef707f4fed5e51cdc80f8d1e54b2a8f
+          - cfa58d744de96c47e982212d5769c70b
+          - f17559535b6cab5dccbebc0403d0b2fd
+      - name: IS_CRITICAL_VIOLATION
+        description: Indicates whether the violation type is classified as critical.
+        expr: IS_CRITICAL_VIOLATION
+        data_type: BOOLEAN
+        sample_values:
+          - 'TRUE'
+          - 'FALSE'
+      - name: VIOLATION_CODE
+        description: Codes identifying specific types of health or safety violations found during restaurant inspections.
+        expr: VIOLATION_CODE
+        data_type: VARCHAR
+        sample_values:
+          - 04I
+          - 10A
+          - 03I
+      - name: VIOLATION_DESCRIPTION
+        description: Descriptions of health code violations found during restaurant inspections.
+        expr: VIOLATION_DESCRIPTION
+        data_type: VARCHAR
+        sample_values:
+          - Non-TCS food that has been served to the public being re-served. (Does not apply to wrapped foods where the wrapper seal has not been broken or opened).
+          - Food allergy information poster not conspicuously posted where food is being prepared or processed by food workers.
+          - Calorie range of food item(s) that comes in different combinations not provided
+    primary_key:
+      columns:
+        - DIM_VIOLATION_KEY
+relationships:
+  - name: FCT_INSPECTIONS_TO_DIM_DATE
+    left_table: FCT_INSPECTIONS
+    right_table: DIM_DATE
+    join_type: inner
+    relationship_type: many_to_one
+    relationship_columns:
+      - left_column: INSPECTION_DATE_KEY
+        right_column: DATE_KEY
+  - name: FCT_INSPECTIONS_TO_DIM_RESTAURANT
+    left_table: FCT_INSPECTIONS
+    right_table: DIM_RESTAURANT
+    join_type: inner
+    relationship_type: many_to_one
+    relationship_columns:
+      - left_column: DIM_RESTAURANT_KEY
+        right_column: DIM_RESTAURANT_KEY
+  - name: FCT_VIOLATIONS_TO_DIM_DATE
+    left_table: FCT_VIOLATIONS
+    right_table: DIM_DATE
+    join_type: inner
+    relationship_type: many_to_one
+    relationship_columns:
+      - left_column: INSPECTION_DATE_KEY
+        right_column: DATE_KEY
+  - name: FCT_VIOLATIONS_TO_DIM_RESTAURANT
+    left_table: FCT_VIOLATIONS
+    right_table: DIM_RESTAURANT
+    join_type: inner
+    relationship_type: many_to_one
+    relationship_columns:
+      - left_column: DIM_RESTAURANT_KEY
+        right_column: DIM_RESTAURANT_KEY
+  - name: FCT_VIOLATIONS_TO_DIM_VIOLATION_TYPE
+    left_table: FCT_VIOLATIONS
+    right_table: DIM_VIOLATION_TYPE
+    join_type: inner
+    relationship_type: many_to_one
+    relationship_columns:
+      - left_column: DIM_VIOLATION_KEY
+        right_column: DIM_VIOLATION_KEY
+verified_queries:
+  - name: 0;1
+    question: How do restaurant inspection volumes and average scores vary by day of the week this year?
+    sql: SELECT d.day_name_short AS day_name, d.day_of_week, COUNT(*) AS inspections, ROUND(AVG(i.inspection_score), 1) AS avg_score FROM fct_inspections AS i JOIN dim_date AS d ON i.inspection_date_key = d.date_key WHERE d.year_number = YEAR(CURRENT_DATE) GROUP BY d.day_name_short, d.day_of_week ORDER BY d.day_of_week
+    verified_at: 1772905309
+    verified_by: Semantic Model Generator
+  - name: 1;1
+    question: Which zip codes have the highest average critical violations per restaurant over the last 12 months?
+    sql: SELECT r.zipcode, r.borough, COUNT(DISTINCT r.restaurant_id) AS restaurants, SUM(CASE WHEN v.is_critical_violation THEN v.violation_count ELSE 0 END) AS critical_citations, ROUND(critical_citations * 1.0 / NULLIF(restaurants, 0), 1) AS critical_per_restaurant FROM fct_violations AS v JOIN dim_restaurant AS r ON v.dim_restaurant_key = r.dim_restaurant_key JOIN dim_date AS d ON v.inspection_date_key = d.date_key WHERE d.calendar_date >= DATEADD(MONTH, -12, CURRENT_DATE) AND NOT r.zipcode IS NULL GROUP BY r.zipcode, r.borough HAVING restaurants >= 20 ORDER BY critical_per_restaurant DESC LIMIT 20
+    verified_at: 1772905309
+    verified_by: Semantic Model Generator
+  - name: 2;1
+    question: Which restaurants are repeat offenders that have been closed more than once?
+    sql: SELECT r.restaurant_name, r.borough, r.cuisine_description AS cuisine_type, r.street_address, COUNT(*) AS closure_count FROM fct_inspections AS i JOIN dim_restaurant AS r ON i.dim_restaurant_key = r.dim_restaurant_key WHERE i.action ILIKE '%Establishment Closed%' GROUP BY r.restaurant_name, r.borough, r.cuisine_description, r.street_address HAVING closure_count > 1 ORDER BY closure_count DESC LIMIT 20
+    verified_at: 1772905309
+    verified_by: Semantic Model Generator
+  - name: 3;1
+    question: Which restaurants have the highest risk profiles based on their inspection scores this year?
+    sql: SELECT r.restaurant_name, r.borough, r.cuisine_description AS cuisine_type, r.street_address, MAX(i.inspection_score) AS worst_score, ROUND(AVG(i.inspection_score), 0) AS avg_score, SUM(i.critical_violations) AS total_critical, COUNT(*) AS inspections_this_year FROM fct_inspections AS i JOIN dim_restaurant AS r ON i.dim_restaurant_key = r.dim_restaurant_key JOIN dim_date AS d ON i.inspection_date_key = d.date_key WHERE d.calendar_date >= DATE_TRUNC('YEAR', CURRENT_DATE) AND NOT i.inspection_score IS NULL GROUP BY r.restaurant_name, r.borough, r.cuisine_description, r.street_address HAVING inspections_this_year >= 2 ORDER BY avg_score DESC LIMIT 20
+    verified_at: 1772905309
+    verified_by: Semantic Model Generator
+  - name: 4;1
+    question: What is the re-inspection rate by borough for the current year?
+    sql: SELECT r.borough, COUNT(*) AS total_inspections, SUM(CASE WHEN i.inspection_type ILIKE '%Re-Inspection%' THEN 1 ELSE 0 END) AS re_inspections, ROUND(re_inspections * 100.0 / total_inspections, 2) AS re_inspection_rate_pct FROM fct_inspections AS i JOIN dim_restaurant AS r ON i.dim_restaurant_key = r.dim_restaurant_key JOIN dim_date AS d ON i.inspection_date_key = d.date_key WHERE d.calendar_date >= DATE_TRUNC('YEAR', CURRENT_DATE) AND r.borough <> '0' GROUP BY r.borough ORDER BY re_inspection_rate_pct DESC
+    verified_at: 1772905309
+    verified_by: Semantic Model Generator
+  - name: 5;1
+    question: What is the closure rate by borough for NYC restaurants?
+    sql: SELECT r.borough, COUNT(*) AS total_inspections, SUM(CASE WHEN i.action ILIKE '%Establishment Closed%' THEN 1 ELSE 0 END) AS closures, ROUND(closures * 100.0 / total_inspections, 2) AS closure_rate_pct FROM fct_inspections AS i JOIN dim_restaurant AS r ON i.dim_restaurant_key = r.dim_restaurant_key WHERE r.borough <> '0' GROUP BY r.borough ORDER BY closure_rate_pct DESC
+    verified_at: 1772905309
+    verified_by: Semantic Model Generator
+  - name: 6;1
+    question: What are the monthly inspection trends with average scores and Grade A pass rates over the past two years?
+    sql: SELECT d.year_number, d.month_name, d.month_number, COUNT(*) AS inspections, ROUND(AVG(i.inspection_score), 1) AS avg_score, ROUND(AVG(CASE WHEN i.passed_with_grade_a THEN 100.0 ELSE 0.0 END), 1) AS grade_a_rate FROM fct_inspections AS i JOIN dim_date AS d ON i.inspection_date_key = d.date_key WHERE d.year_number >= YEAR(CURRENT_DATE) - 1 GROUP BY d.year_number, d.month_name, d.month_number ORDER BY d.year_number, d.month_number
+    verified_at: 1772905309
+    verified_by: Semantic Model Generator
+  - name: 7;1
+    question: Which cuisine types have the highest share of critical violations among NYC restaurants?
+    sql: SELECT r.cuisine_description AS cuisine_type, SUM(CASE WHEN v.is_critical_violation THEN v.violation_count ELSE 0 END) AS critical_citations, SUM(v.violation_count) AS total_citations, ROUND(critical_citations * 100.0 / NULLIF(total_citations, 0), 1) AS critical_share_pct FROM fct_violations AS v JOIN dim_restaurant AS r ON v.dim_restaurant_key = r.dim_restaurant_key GROUP BY r.cuisine_description HAVING total_citations >= 100 ORDER BY critical_citations DESC LIMIT 15
+    verified_at: 1772905309
+    verified_by: Semantic Model Generator
+  - name: 8;1
+    question: What are the top 10 most frequently cited critical violations in NYC restaurant inspections?
+    sql: SELECT vt.violation_code, vt.violation_description, vt.criticality_label, SUM(v.violation_count) AS citation_count FROM fct_violations AS v JOIN dim_violation_type AS vt ON v.dim_violation_key = vt.dim_violation_key WHERE v.is_critical_violation = TRUE GROUP BY vt.violation_code, vt.violation_description, vt.criticality_label ORDER BY citation_count DESC LIMIT 10
+    verified_at: 1772905309
+    verified_by: Semantic Model Generator
+  - name: 9;1
+    question: What is the Grade A pass rate by borough for restaurant inspections?
+    sql: SELECT r.borough, ROUND(AVG(CASE WHEN i.passed_with_grade_a THEN 100.0 ELSE 0.0 END), 1) AS grade_a_pass_rate, COUNT(*) AS total_inspections FROM fct_inspections AS i JOIN dim_restaurant AS r ON i.dim_restaurant_key = r.dim_restaurant_key WHERE r.borough <> '0' GROUP BY r.borough ORDER BY grade_a_pass_rate DESC
+    verified_at: 1772905309
+    verified_by: Semantic Model Generator
+  - name: 10;1
+    question: What is the distribution of inspection grades across different boroughs?
+    sql: SELECT r.borough, i.grade, COUNT(*) AS inspection_count FROM fct_inspections AS i JOIN dim_restaurant AS r ON i.dim_restaurant_key = r.dim_restaurant_key WHERE i.grade IN ('A', 'B', 'C') GROUP BY r.borough, i.grade ORDER BY r.borough, i.grade
+    verified_at: 1772905309
+    verified_by: Semantic Model Generator

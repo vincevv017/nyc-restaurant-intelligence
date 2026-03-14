@@ -1,11 +1,31 @@
-# NYC Restaurant Intelligence
+# NYC Restaurant Intelligence — Agentic BI on Snowflake
 
-A reproducible data pipeline built on Snowflake that ingests the full NYC Department of Health restaurant inspection dataset and models it into a star schema ready for Snowflake Intelligence (AI/BI) analysis.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Snowflake](https://img.shields.io/badge/platform-Snowflake-29B5E8.svg)](https://www.snowflake.com/)
+[![dbt](https://img.shields.io/badge/transformations-dbt-FF694B.svg)](https://www.getdbt.com/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![Cortex Agent](https://img.shields.io/badge/AI-Cortex%20Agent-29B5E8.svg)](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agent)
+[![Article Series](https://img.shields.io/badge/LinkedIn-Article%20Series-0A66C2.svg)](https://www.linkedin.com/in/vincent-vikor-8662984/)
 
-This repository is the technical foundation for the **Snowflake Intelligence** article series demonstrating context-aware AI/BI using progressive context loading.
+> A fully reproducible agentic BI application built on Snowflake, using NYC restaurant inspection open data. Demonstrates how progressive context loading — structured semantic layer, unstructured document retrieval, and a Cortex Agent orchestrating both — closes the gap between raw data and genuinely useful AI answers. Every phase ships with working code, honest failure documentation, and a cloneable repository.
 
-**Article series:** [LinkedIn — Vincent Vikor](https://www.linkedin.com/in/vincevkor/)  
-**Dataset:** [NYC Restaurant Inspection Results](https://data.cityofnewyork.us/Health/NYC-Restaurant-Inspection-Results/gv23-aida/about_data) — ~250k rows, updated daily by NYC DOHMH
+## 🎯 What This Project Delivers
+
+**v1.0:** End-to-end agentic BI on a free Snowflake trial — from open data ingestion to a conversational agent that combines live inspection data with NYC Health Code PDFs in a single answer.
+
+- ✅ **Reproducible ingestion** — Socrata API → Snowflake RAW → dbt star schema in under two minutes
+- ✅ **Production-grade data quality** — five undocumented source issues found, documented, and resolved in the staging layer
+- ✅ **Semantic layer** — 1,365-line Snowflake Semantic View encoding domain knowledge: score directionality, grade logic, borough filters, verified queries
+- ✅ **Cortex Analyst** — natural language to SQL over governed semantic definitions, benchmarked at 83% correct on 24 questions
+- ✅ **Cortex Search** — NYC Health Code PDFs (Article 81, Chapter 23) indexed and queryable by the agent
+- ✅ **Cortex Agent** — orchestrates both tools; answers "which restaurants have the most critical violations, and what does the health code say about closure thresholds?" in one response
+- ✅ **Python REST client** — JWT key-pair auth, SSE streaming, client-side SQL execution loop, debug mode, multi-turn sessions
+- ✅ **Production readiness** — cost monitoring via `ACCOUNT_USAGE`, MFA enforcement, audit trail
+
+**Processing open data:** NYC DOHMH inspection records (296k rows, updated daily) + Health Code PDFs → governed star schema → semantic layer → Cortex Agent → conversational interface.
+
+**Article series:** [LinkedIn — Vincent Vikor](https://www.linkedin.com/in/vincent-vikor-8662984/)
+**Dataset:** [NYC Restaurant Inspection Results](https://data.cityofnewyork.us/Health/NYC-Restaurant-Inspection-Results/gv23-aida/about_data) — NYC Open Data, updated daily by NYC DOHMH
 
 ---
 
@@ -25,7 +45,7 @@ RESTAURANT_INTELLIGENCE.RAW.INSPECTIONS_RAW
         │  dbt Core transformations
         ▼
 RESTAURANT_INTELLIGENCE.STAGING
-  ├── stg_inspections      ← Typed, cleaned, full grain
+  ├── stg_inspections      ← Typed, cleaned, deduped
   ├── stg_restaurants      ← One row per restaurant (CAMIS)
   └── stg_violations       ← Violation code reference
 
@@ -35,9 +55,41 @@ RESTAURANT_INTELLIGENCE.STAGING
 RESTAURANT_INTELLIGENCE.MARTS
   ├── dim_restaurant        ← Restaurant dimension
   ├── dim_violation_type    ← Violation reference dimension
-  ├── dim_date              ← Date spine (required for Snowflake Intelligence)
+  ├── dim_date              ← Date spine (required for time intelligence)
   ├── fct_inspections       ← Inspection events (aggregated)
   └── fct_violations        ← Individual violations cited (granular)
+
+        │
+        │  Snowflake Semantic View (1,365-line YAML)
+        ▼
+MARTS.NYC_RESTAURANT_INSPECTIONS
+  ├── Logical tables, dimensions, metrics
+  ├── Business rules: score directionality, borough exclusion, time defaults
+  └── Verified queries for common patterns
+
+        │
+        │  Cortex Search (PDF index)
+NYC Health Code PDFs (Article 81, Chapter 23)
+  └── ingestion/table_aware_extraction.py → MARTS.DOCUMENT_CHUNKS
+                                          → MARTS.HEALTH_CODE_SEARCH
+
+        │
+        │  Orchestration
+        ▼
+MARTS.NYC_RESTAURANT_AGENT (Cortex Agent)
+  ├── Tool: Cortex Analyst ← structured queries via semantic view
+  └── Tool: Cortex Search  ← regulatory document retrieval
+
+        │
+        ├── Snowsight UI      ← conversational interface (no dev hooks)
+        └── cortex/cortex_agent.py  ← Python REST API (JWT auth, SSE streaming, multi-turn)
+
+        │
+        ▼
+monitoring/
+  ├── CORTEX_ANALYST_USAGE_HISTORY  ← per-message cost
+  ├── CORTEX_SEARCH_DAILY_USAGE_HISTORY  ← serving + embedding cost
+  └── METERING_DAILY_HISTORY    ← invoice-aligned rollup
 ```
 
 **Load strategy:** Full TRUNCATE + reload on every pipeline run. No incremental logic — keeps the demo simple and idempotent. Typical full load timing: ~110s fetching from Socrata (network-bound) + ~17s loading to Snowflake via internal stage = ~127s total.
@@ -74,27 +126,16 @@ cp .env.example .env
 Edit `.env` with your Snowflake credentials:
 
 ```dotenv
-SNOWFLAKE_ACCOUNT=your_account_locator
+SNOWFLAKE_ACCOUNT=ORGNAME-ACCOUNTNAME
 SNOWFLAKE_USER=your_username
 SNOWFLAKE_PASSWORD=your_password
 SNOWFLAKE_WAREHOUSE=RESTAURANT_WH
 SNOWFLAKE_DATABASE=RESTAURANT_INTELLIGENCE
 SNOWFLAKE_ROLE=RESTAURANT_LOADER
-NYC_APP_TOKEN=your_app_token   # optional but recommended
+NYC_APP_TOKEN=your_app_token  
+SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.pem
 ```
 
-**Finding your account identifier:**
-
-Look at your browser URL when logged into Snowflake — use everything before `.snowflakecomputing.com`:
-
-| Region | Format example |
-|--------|---------------|
-| AWS us-east-1 | `abc12345` |
-| AWS eu-west-1 (Ireland) | `abc12345.eu-west-1.aws` |
-| AWS eu-west-3 (Paris) | `abc12345.eu-west-3.aws` |
-| Azure West Europe | `abc12345.west-europe.azure` |
-
-> ⚠️ For any region outside AWS us-east-1, you **must** append the region suffix. A 404 error on connection always means a wrong account identifier format.
 
 **Getting a free NYC Open Data app token:**  
 Register at [data.cityofnewyork.us](https://data.cityofnewyork.us) → Developer Settings → Create New App Token. Without a token, requests are rate-limited to 1,000 rows/request instead of 1,000,000.
@@ -175,7 +216,7 @@ nyc_restaurant_intelligence:
   outputs:
     dev:
       type:      snowflake
-      account:   abc12345.eu-west-3.aws   # same format as your .env
+      account:   ORGNAME-ACCOUNTNAME   # same format as your .env
       user:      your_username
       password:  your_password
       role:      RESTAURANT_LOADER
@@ -289,12 +330,12 @@ Higher score = more violations = worse outcome.
 nyc-restaurant-intelligence/
 ├── .env.example                          ← Credential template (copy to .env)
 ├── .gitignore
-├── README.md
+├── README.md                             ← You are here (Phase 1)
 │
 ├── setup/
 │   └── 01_snowflake_setup.sql            ← Run once as ACCOUNTADMIN
 │
-├── ingestion/
+├── ingestion/                            ← Phase 1: Socrata → RAW → star schema
 │   ├── .venv/                            ← Ingestion venv (gitignored)
 │   ├── requirements.txt
 │   ├── config.py                         ← Reads from .env
@@ -302,24 +343,56 @@ nyc-restaurant-intelligence/
 │
 ├── .venv-dbt/                            ← dbt venv (gitignored)
 │
-└── dbt/
-    ├── dbt_project.yml
-    ├── profiles.yml.example              ← Copy to ~/.dbt/profiles.yml
-    ├── macros/
-    │   └── generate_schema_name.sql      ← Prevents STAGING_STAGING / MARTS_MARTS naming
-    └── models/
-        ├── staging/
-        │   ├── sources.yml
-        │   ├── stg_inspections.sql
-        │   ├── stg_restaurants.sql
-        │   └── stg_violations.sql
-        └── marts/
-            ├── dim_date.sql
-            ├── dim_restaurant.sql
-            ├── dim_violation_type.sql
-            ├── fct_inspections.sql
-            └── fct_violations.sql
+├── dbt/                                  ← Phase 1: transformations
+│   ├── dbt_project.yml
+│   ├── profiles.yml.example              ← Copy to ~/.dbt/profiles.yml
+│   ├── macros/
+│   │   └── generate_schema_name.sql      ← Prevents STAGING_STAGING / MARTS_MARTS naming
+│   └── models/
+│       ├── staging/
+│       │   ├── sources.yml
+│       │   ├── stg_inspections.sql
+│       │   ├── stg_restaurants.sql
+│       │   └── stg_violations.sql
+│       └── marts/
+│           ├── dim_date.sql
+│           ├── dim_restaurant.sql
+│           ├── dim_violation_type.sql
+│           ├── fct_inspections.sql
+│           └── fct_violations.sql
+│
+├── semantic/                             ← Phase 2: semantic view + Cortex Analyst
+│   ├── README.md
+│   ├── 02_deploy_semantic.sql
+│   └── nyc_restaurant_inspections.yaml   ← 1,365-line semantic view YAML
+│
+├── cortex/                               ← Phase 3: Cortex Search + Cortex Agent
+│   ├── README.md
+│   ├── .venv/                            ← Cortex venv (gitignored)
+│   ├── requirements.txt
+│   ├── load_documents.py                 ← Downloads PDFs → RAW.DOCUMENT_CHUNKS
+│   ├── table_aware_extraction.py         ← PDF table → narrative prose converter
+│   ├── 03_cortex_search_setup.sql
+│   ├── 04_cortex_agent_setup.sql
+│   └── cortex_agent.py                   ← Python REST API agent (JWT, SSE, multi-turn)
+│
+└── monitoring/                           ← Phase 4: observability + security
+    ├── README.md
+    └── monitoring_security.sql
 ```
+
+---
+
+## Continue to the Next Phase
+
+Each subfolder has its own README covering setup, expected outputs, known issues, and design decisions for that phase. Follow them in order — each phase builds on the previous one.
+
+| Phase | Folder | What it covers |
+|-------|--------|---------------|
+| 1 | *(this README)* | Socrata ingestion, dbt star schema, data quality |
+| 2 | [`semantic/`](semantic/README.md) | Semantic view deployment, Cortex Analyst benchmarking |
+| 3 | [`cortex/`](cortex/README.md) | Health code PDF indexing, Cortex Agent, Python REST client |
+| 4 | [`monitoring/`](monitoring/README.md) | Cost tracking, MFA enforcement, audit trail |
 
 ---
 
@@ -329,7 +402,7 @@ nyc-restaurant-intelligence/
 → `.env` is missing or not in the project root. Run `ls -la` at the root to verify.
 
 **`404 Not Found` on connection**  
-→ Wrong account identifier format. For any AWS region outside us-east-1, the region suffix is required (e.g. `abc12345.eu-west-3.aws`). Check your browser URL when logged into Snowflake.
+→ Wrong account identifier format. Use the `ORGNAME-ACCOUNTNAME` format — find it in Snowsight under **Admin → Accounts**, or run `SELECT CURRENT_ORGANIZATION_NAME() || '-' || CURRENT_ACCOUNT_NAME()`.
 
 **`250001: Incorrect username or password`**  
 → Password is wrong or the role hasn't been granted to your user. Verify by logging into the Snowflake UI directly. Re-run the setup script if needed.
