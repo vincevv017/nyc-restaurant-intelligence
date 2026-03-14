@@ -3,7 +3,7 @@ nyc_restaurant_intelligence:
   outputs:
     dev:
       type:      snowflake
-      account:   ABC12345        # just the locator, no region suffix
+      account:   ORGNAME-ACCOUNTNAME   # same format as your .env
       user:      your_username
       password:  your_password
       role:      RESTAURANT_LOADER
