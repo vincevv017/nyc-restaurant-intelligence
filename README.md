@@ -4,8 +4,7 @@
 [![Snowflake](https://img.shields.io/badge/platform-Snowflake-29B5E8.svg)](https://www.snowflake.com/)
 [![dbt](https://img.shields.io/badge/transformations-dbt-FF694B.svg)](https://www.getdbt.com/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
-[![Cortex Agent](https://img.shields.io/badge/AI-Cortex%20Agent-29B5E8.svg)](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agent)
-[![Article Series](https://img.shields.io/badge/LinkedIn-Article%20Series-0A66C2.svg)](https://www.linkedin.com/in/vincent-vikor-8662984/)
+[![Cortex Agent](https://img.shields.io/badge/AI-Cortex%20Agent-29B5E8.svg)](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents)
 
 > A fully reproducible agentic BI application built on Snowflake, using NYC restaurant inspection open data. Demonstrates how progressive context loading — structured semantic layer, unstructured document retrieval, and a Cortex Agent orchestrating both — closes the gap between raw data and genuinely useful AI answers. Every phase ships with working code, honest failure documentation, and a cloneable repository.
 
@@ -453,7 +452,7 @@ MIT — use freely, attribution appreciated.
 
 ---
 
-*Built by [Vincent Vikor](https://www.linkedin.com/in/vincevkor/) | Solutions Architect*
+*Built by [Vincent Vikor](https://www.linkedin.com/in/vincent-vikor-8662984/) | Solutions Architect*
 
 ---
 
