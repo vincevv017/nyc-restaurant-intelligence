@@ -19,7 +19,7 @@
 - ✅ **Reproducible ingestion** — Socrata API → Snowflake RAW → dbt star schema in under two minutes
 - ✅ **Production-grade data quality** — five undocumented source issues found, documented, and resolved in the staging layer
 - ✅ **Semantic layer** — 1,365-line Snowflake Semantic View encoding domain knowledge: score directionality, grade logic, borough filters, verified queries
-- ✅ **Cortex Analyst** — natural language to SQL over governed semantic definitions, benchmarked at 83% correct on 24 questions
+- ✅ **Cortex Analyst** — natural language to SQL over governed semantic definitions
 - ✅ **Cortex Search** — NYC Health Code PDFs (Article 81, Chapter 23) indexed and queryable by the agent
 - ✅ **Cortex Agent** — orchestrates both tools; answers "which restaurants have the most critical violations, and what does the health code say about closure thresholds?" in one response
 - ✅ **Python REST client** — JWT key-pair auth, SSE streaming, client-side SQL execution loop, debug mode, multi-turn sessions
@@ -333,15 +333,16 @@ Higher score = more violations = worse outcome.
 nyc-restaurant-intelligence/
 ├── .env.example                          ← Credential template (copy to .env)
 ├── .gitignore
+├── pyrightconfig.json
 ├── README.md                             ← You are here (Phase 1)
 │
 ├── setup/
-│   └── 01_snowflake_setup.sql            ← Run once as ACCOUNTADMIN
+│   ├── 01_snowflake_setup.sql            ← Run once as ACCOUNTADMIN
+│   └── config.py                         ← Reads from .env
 │
 ├── ingestion/                            ← Phase 1: Socrata → RAW → star schema
 │   ├── .venv/                            ← Ingestion venv (gitignored)
 │   ├── requirements.txt
-│   ├── config.py                         ← Reads from .env
 │   └── load_inspections.py               ← Socrata → Snowflake loader
 │
 ├── .venv-dbt/                            ← dbt venv (gitignored)

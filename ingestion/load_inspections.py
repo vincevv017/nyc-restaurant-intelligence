@@ -35,7 +35,12 @@ from datetime import datetime, timezone
 
 import requests
 import snowflake.connector
+from snowflake.connector.connection import SnowflakeConnection
+
 from tqdm import tqdm
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "setup"))
 
 import config
 
@@ -141,7 +146,7 @@ def normalise_row(record: dict) -> tuple:
 
 # ── Snowflake load ────────────────────────────────────────────────────────────
 
-def load_to_snowflake(records: list[dict]) -> None:
+def load_to_snowflake(records: list[dict]) -> SnowflakeConnection:
     print("Connecting to Snowflake …")
     conn = snowflake.connector.connect(
         account   = config.SNOWFLAKE_ACCOUNT,
@@ -180,7 +185,8 @@ def load_to_snowflake(records: list[dict]) -> None:
         print(f"\n✅ Inserted {nrows:,} rows into {target} ({nchunks} chunk(s))")
 
         cur.execute(f"SELECT COUNT(*) FROM {target}")
-        count = cur.fetchone()[0]
+        row = cur.fetchone()
+        count = row[0] if row is not None else 0
         print(f"   Row count confirmed: {count:,}")
 
     finally:
@@ -199,6 +205,8 @@ def _get_snowflake_token(conn: snowflake.connector.SnowflakeConnection) -> str |
     Returns None if the token cannot be obtained (non-blocking).
     """
     try:
+        if conn.rest is None:
+            raise RuntimeError("Could not retrieve session token")
         # The connector stores the session token in the REST handler
         return conn.rest.token
     except Exception as exc:

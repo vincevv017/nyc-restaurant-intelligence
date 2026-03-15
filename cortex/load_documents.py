@@ -59,7 +59,9 @@ import pdfplumber
 import requests
 import snowflake.connector
 from tqdm import tqdm
-
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "setup"))
 import config
 from table_aware_extraction import extract_pdf_pages_table_aware
 
@@ -300,6 +302,8 @@ def emit_openlineage_event(
     credentials required. Failures are non-blocking warnings.
     """
     try:
+        if conn.rest is None:
+            raise RuntimeError("Snowflake session has no REST client — cannot retrieve token for OpenLineage.")
         token = conn.rest.token
     except Exception:
         print("   ⚠  Could not retrieve session token — skipping lineage emission.")
@@ -534,6 +538,7 @@ def main():
             continue
 
         # Load
+        assert conn is not None
         inserted = load_chunks_to_snowflake(all_chunks, source, conn)
         total_chunks   += inserted
         sources_loaded.append(source)
