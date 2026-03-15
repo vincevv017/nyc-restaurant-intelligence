@@ -182,7 +182,23 @@ instructions:
     - If the user says "this year", use YEAR(inspection_date) = YEAR(CURRENT_DATE)
     - If the user says "recent", default to the last 6 months
 
+    DATA FRESHNESS:
+    - For EVERY question routed to nyc_inspection_analyst, you MUST determine
+      the most recent inspection date in the dataset by querying
+      MAX(inspection_date) from the inspections data
+    - Include this date in your response context so the response layer can
+      display it
+    - This can be extracted from the main query result if it already includes
+      inspection_date, or queried separately if the main query does not
+      surface dates
+
   response: |
+    DATA FRESHNESS REQUIREMENT:
+    Every response that uses inspection data MUST begin with:
+    📅 Data through: <most recent inspection date from MAX(inspection_date)>
+    Display this line BEFORE the filters section. If the query did not
+    involve inspection data (e.g., pure document search), omit this line.
+  
     TRANSPARENCY REQUIREMENT:
     Whenever you apply a filter or condition that the user did NOT explicitly
     request in their question, you MUST state it at the top of your response
