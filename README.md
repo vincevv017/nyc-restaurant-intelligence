@@ -107,7 +107,7 @@ monitoring/
 |------|---------|---------|
 | Python | ≥ 3.11 | Ingestion script |
 | dbt Core | ≥ 1.8 | SQL transformations |
-| Snowflake account | Trial or paid | Target database |
+| Snowflake account | Trial or paid | Target data platform |
 
 A free [Snowflake trial account](https://signup.snowflake.com/) (30 days / $400 credits) is sufficient for this entire project.
 
