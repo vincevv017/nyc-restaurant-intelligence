@@ -27,6 +27,8 @@
 
 **Processing open data:** NYC DOHMH inspection records (296k rows, updated daily) + Health Code PDFs → governed star schema → semantic layer → Cortex Agent → conversational interface.
 
+![Snowflake Intelligence](setup/agent_welcome.jpeg)
+
 **Article series:** [LinkedIn — Vincent Vikor](https://www.linkedin.com/in/vincent-vikor-8662984/)
 **Dataset:** [NYC Restaurant Inspection Results](https://data.cityofnewyork.us/Health/NYC-Restaurant-Inspection-Results/gv23-aida/about_data) — NYC Open Data, updated daily by NYC DOHMH
 
