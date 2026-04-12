@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Cortex Agent](https://img.shields.io/badge/AI-Cortex%20Agent-29B5E8.svg)](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents)
 
-> A fully reproducible agentic BI application built on Snowflake, using NYC restaurant inspection open data. Demonstrates how progressive context loading — structured semantic layer, unstructured document retrieval, and a Cortex Agent orchestrating both — closes the gap between raw data and genuinely useful AI answers. Every phase ships with working code, honest failure documentation, and a cloneable repository.
+> A fully reproducible agentic BI application built on Snowflake, using NYC restaurant inspection open data. Demonstrates how progressive context loading — structured semantic layer, unstructured document retrieval, persistent user memory, and a Cortex Agent orchestrating all three — closes the gap between raw data and genuinely useful AI answers. Every phase ships with working code, honest failure documentation, and a cloneable repository.
 
 ## 🎯 What This Project Delivers
 
@@ -25,7 +25,15 @@
 - ✅ **Python REST client** — JWT key-pair auth, SSE streaming, client-side SQL execution loop, debug mode, multi-turn sessions
 - ✅ **Production readiness** — cost monitoring via `ACCOUNT_USAGE`, MFA enforcement, audit trail
 
-**Processing open data:** NYC DOHMH inspection records (296k rows, updated daily) + Health Code PDFs → governed star schema → semantic layer → Cortex Agent → conversational interface.
+**v1.1:** Persistent memory and interactive map — the agent now remembers who you are across sessions, and inspection grades are visualised on a live map.
+
+- ✅ **Client-side memory (Phase 5)** — `AGENT_USER_MEMORY` table, regex-based fact extraction, context injection. Two deployment targets: CLI (`agent_with_memory.py`) and Streamlit in Snowflake (`streamlit_app.py`)
+- ✅ **Native agent memory (Phase 6)** — server-side memory using Cortex Agent custom tools (`store_user_memory`, `retrieve_user_memories`), `AI_EMBED` vector embeddings, `VECTOR_COSINE_SIMILARITY` retrieval — no client code required
+- ✅ **Cross-session persistence** — facts stored in one session are retrieved in future sessions without re-asking
+- ✅ **Emergent soft-delete** — "forget my address" works without a dedicated delete tool; agent uses the store procedure to write a `REMOVE` sentinel, confirmed through 62-question structured test suite
+- ✅ **Interactive map** — pydeck map in Streamlit in Snowflake, querying directly through the semantic view for consistency with agent answers
+
+**Processing open data:** NYC DOHMH inspection records (296k rows, updated daily) + Health Code PDFs → governed star schema → semantic layer → Cortex Agent with persistent memory → conversational interface.
 
 ![Snowflake Intelligence](setup/agent_welcome.jpeg)
 
@@ -86,15 +94,36 @@ MARTS.NYC_RESTAURANT_AGENT (Cortex Agent)
   └── Tool: Cortex Search  ← regulatory document retrieval
 
         │
-        ├── Snowsight UI      ← conversational interface (no dev hooks)
+        ├── Snowsight UI            ← conversational interface (no dev hooks)
         └── cortex/cortex_agent.py  ← Python REST API (JWT auth, SSE streaming, multi-turn)
 
         │
         ▼
 monitoring/
-  ├── CORTEX_ANALYST_USAGE_HISTORY  ← per-message cost
+  ├── CORTEX_ANALYST_USAGE_HISTORY       ← per-message cost
   ├── CORTEX_SEARCH_DAILY_USAGE_HISTORY  ← serving + embedding cost
-  └── METERING_DAILY_HISTORY    ← invoice-aligned rollup
+  └── METERING_DAILY_HISTORY             ← invoice-aligned rollup
+
+        │
+        ▼  Phase 5 — Client-side memory
+memory/
+  ├── AGENT_USER_MEMORY (key-value table)
+  ├── memory_manager.py    ← regex fact extraction, context injection, MERGE upsert
+  ├── agent_with_memory.py ← CLI client with memory
+  └── streamlit_app.py     ← Streamlit in Snowflake app
+
+        │
+        ▼  Phase 6 — Native agent memory
+native_memory/
+  ├── AGENT_MEMORY_VECTORS (key-value + VECTOR(FLOAT,1024) embeddings)
+  ├── STORE_USER_MEMORY    ← stored procedure: AI_EMBED + MERGE
+  ├── RETRIEVE_USER_MEMORIES ← stored procedure: AI_EMBED + VECTOR_COSINE_SIMILARITY
+  └── NYC_RESTAURANT_MEMORY_AGENT ← Cortex Agent with custom memory tools
+
+        │
+        ▼  Map
+map/
+  └── streamlit_map_app.py ← pydeck map via SEMANTIC_VIEW (same governed layer as agent)
 ```
 
 **Load strategy:** Full TRUNCATE + reload on every pipeline run. No incremental logic — keeps the demo simple and idempotent. Typical full load timing: ~110s fetching from Socrata (network-bound) + ~17s loading to Snowflake via internal stage = ~127s total.
@@ -383,14 +412,36 @@ nyc-restaurant-intelligence/
 │   ├── 04_cortex_agent_setup.sql
 │   └── cortex_agent.py                   ← Python REST API agent (JWT, SSE, multi-turn)
 │
-└── monitoring/                           ← Phase 4: observability + security
+├── monitoring/                           ← Phase 4: observability + security
+│   ├── README.md
+│   └── monitoring_security.sql
+│
+├── memory/                               ← Phase 5: client-side persistent memory
+│   ├── memory_README.md
+│   ├── memory_manager.py                 ← Fact store: MERGE upsert, regex extraction, context injection
+│   ├── response_parser.py                ← Extracts 📅 freshness + 🔍 filters from agent responses
+│   ├── agent_with_memory.py              ← CLI client with memory (JWT auth)
+│   ├── streamlit_app.py                  ← Streamlit in Snowflake app with memory + map
+│   └── upload_to_stage.py                ← Deploys app files to Snowflake stage
+│
+├── native_memory/                        ← Phase 6: server-side native memory (custom agent tools)
+│   ├── GUIDE.md
+│   ├── 01_memory_vector_table.sql        ← AGENT_MEMORY_VECTORS with VECTOR(FLOAT,1024)
+│   ├── 02_memory_procedures.sql          ← STORE_USER_MEMORY + RETRIEVE_USER_MEMORIES
+│   ├── 03_agent_with_native_memory.sql   ← NYC_RESTAURANT_MEMORY_AGENT spec
+│   ├── 04_testing_strategy.sql           ← 62-question structured test suite
+│   ├── test_results.yaml                 ← Test results template
+│   ├── test_results_iteration_01.yaml    ← Run 1 results (initial spec)
+│   └── test_results_iteration_02.yaml   ← Run 2 results (after out-of-scope fix)
+│
+└── map/                                  ← Interactive inspection grade map
     ├── README.md
-    └── monitoring_security.sql
+    └── streamlit_map_app.py              ← pydeck map via SEMANTIC_VIEW
 ```
 
 ---
 
-## Continue to the Next Phase
+## Phase Navigation
 
 Each subfolder has its own README covering setup, expected outputs, known issues, and design decisions for that phase. Follow them in order — each phase builds on the previous one.
 
@@ -400,6 +451,37 @@ Each subfolder has its own README covering setup, expected outputs, known issues
 | 2 | [`semantic/`](semantic/README.md) | Semantic view deployment, Cortex Analyst benchmarking |
 | 3 | [`cortex/`](cortex/README.md) | Health code PDF indexing, Cortex Agent, Python REST client |
 | 4 | [`monitoring/`](monitoring/README.md) | Cost tracking, MFA enforcement, audit trail |
+| 5 | [`memory/`](memory/memory_README.md) | Client-side persistent memory, Streamlit in Snowflake app |
+| 6 | [`native_memory/`](native_memory/GUIDE.md) | Server-side native memory, AI_EMBED, vector retrieval, custom agent tools |
+| Map | [`map/`](map/README.md) | Interactive pydeck inspection grade map |
+
+---
+
+## Release Notes
+
+### v1.1 — Native Memory & Map (April 2026)
+
+**Phase 5 — Client-side persistent memory** (`memory/`)
+- `AGENT_USER_MEMORY` key-value table — stores user facts across sessions
+- `memory_manager.py` — regex-based fact extraction from agent responses, MERGE upsert, context injection into every future turn
+- `response_parser.py` — extracts structured `📅 Data through` and `🔍 Filters applied` metadata from agent responses
+- `agent_with_memory.py` — CLI client integrating memory with the existing Cortex Agent
+- `streamlit_app.py` — full Streamlit in Snowflake app: chat interface, memory sidebar, data freshness panel, filter transparency, debug panel
+
+**Phase 6 — Native agent memory** (`native_memory/`)
+- `AGENT_MEMORY_VECTORS` — key-value table with `VECTOR(FLOAT, 1024)` embeddings via `snowflake-arctic-embed-l-v2.0`
+- `STORE_USER_MEMORY` stored procedure — embeds and upserts facts; used by agent as a custom tool
+- `RETRIEVE_USER_MEMORIES` stored procedure — embeds query, returns top-k facts by `VECTOR_COSINE_SIMILARITY`
+- `NYC_RESTAURANT_MEMORY_AGENT` — new Cortex Agent alongside the original; shares the same semantic view and Cortex Search service
+- 62-question structured test suite across 5 categories; 2 iterations documented with full pass/fail results
+- Emergent soft-delete: "forget my address" works via `REMOVE` sentinel — no dedicated delete procedure needed
+
+**Map** (`map/`)
+- Interactive pydeck map of inspection grades deployed as a Streamlit in Snowflake app
+- Queries through `SEMANTIC_VIEW` — identical numbers to the agent for the same question
+
+### v1.0 — Agentic BI baseline (March 2026)
+- Phases 1–4: ingestion, dbt star schema, semantic layer, Cortex Agent, monitoring
 
 ---
 
@@ -446,14 +528,9 @@ Each subfolder has its own README covering setup, expected outputs, known issues
 
 ---
 
-## What's Next — Phase 2
+## What's Next
 
-Phase 2 adds Snowflake Intelligence (Cortex Agent) on top of this pipeline:
-
-1. **Snowflake Semantic Views** — native semantic layer over the star schema
-2. **Progressive context loading** — how AI responses improve as context is added
-3. **Conversation memory** — agents that learn from user corrections
-4. **Natural language queries** — "Which cuisines have the most critical violations in Brooklyn this year?"
+All six phases are complete and documented. The full progression — from raw open data to a persistent-memory conversational agent — is available in this repository. See the [Phase Navigation](#phase-navigation) table above to jump to any phase.
 
 ---
 
