@@ -1,0 +1,22 @@
+# NYC Restaurant Intelligence — memory/ dependencies
+# Phase 5: Persistent Memory
+#
+# Install into the cortex venv (recommended — shares the environment):
+#   cd cortex && source .venv/bin/activate
+#   pip install -r ../memory/requirements.txt
+#
+# Or create a separate venv for this phase:
+#   cd memory && python -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt -r ../cortex/requirements.txt
+
+# ── Inherited from cortex/requirements.txt ────────────────────────────────────
+snowflake-connector-python[pandas]==3.10.1
+requests==2.32.3
+python-dotenv==1.0.1
+PyJWT>=2.8.0
+cryptography
+
+# ── Phase 5 additions ─────────────────────────────────────────────────────────
+# streamlit is provided by the SiS runtime — listed here for local testing only
+streamlit>=1.35.0
+# snowflake-ml-python is NOT required: check_for_memory_request() is regex-based

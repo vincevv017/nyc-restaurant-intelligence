@@ -1,0 +1,16 @@
+# NYC Restaurant Intelligence — map/ dependencies
+#
+# Install into the cortex venv (recommended):
+#   cd cortex && source .venv/bin/activate
+#   pip install -r ../map/requirements.txt
+#
+# map_engine.py requires only pydeck and pandas.
+# pandas is already present in cortex/requirements.txt.
+# streamlit_map_app.py requires streamlit and snowflake-snowpark-python,
+# both provided by the Streamlit in Snowflake runtime — no local install needed.
+
+# ── New dependency for this phase ─────────────────────────────────────────────
+pydeck>=0.9.0
+
+# ── Already in cortex/requirements.txt (listed here for standalone installs) ──
+pandas>=2.0

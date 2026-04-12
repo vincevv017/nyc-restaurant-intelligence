@@ -133,13 +133,14 @@ Edit `.env` with your Snowflake credentials:
 ```dotenv
 SNOWFLAKE_ACCOUNT=ORGNAME-ACCOUNTNAME
 SNOWFLAKE_USER=your_username
-SNOWFLAKE_PASSWORD=your_password
 SNOWFLAKE_WAREHOUSE=RESTAURANT_WH
 SNOWFLAKE_DATABASE=RESTAURANT_INTELLIGENCE
 SNOWFLAKE_ROLE=RESTAURANT_LOADER
-NYC_APP_TOKEN=your_app_token  
+NYC_APP_TOKEN=your_app_token
 SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.pem
 ```
+
+> **No password in `.env`** — `cortex_agent.py` and `memory_manager.py` both use key-pair auth (`SNOWFLAKE_PRIVATE_KEY_PATH`). Password auth triggers MFA on accounts where it is enforced (all paid accounts). dbt uses a separate `~/.dbt/profiles.yml` — see Step 8.
 
 
 **Getting a free NYC Open Data app token:**  
@@ -412,6 +413,9 @@ Each subfolder has its own README covering setup, expected outputs, known issues
 
 **`250001: Incorrect username or password`**  
 → Password is wrong or the role hasn't been granted to your user. Verify by logging into the Snowflake UI directly. Re-run the setup script if needed.
+
+**`MFA authentication is required, but none of your current MFA methods are supported for programmatic authentication`**  
+→ Your account enforces MFA for password-based connections (all paid accounts). `cortex_agent.py` and `memory_manager.py` use key-pair auth and are unaffected. For dbt, either enroll in MFA (Snowsight → your profile → MFA) or switch `~/.dbt/profiles.yml` to `authenticator: externalbrowser` for interactive sessions.
 
 **`dbt_project.yml file [ERROR not found]`**  
 → Run `dbt debug` from inside the `dbt/` subfolder, not the project root.

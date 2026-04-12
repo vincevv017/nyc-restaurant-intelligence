@@ -47,9 +47,11 @@ import requests
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
 import jwt
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # SiS runtime — python-dotenv is not installed; no .env file to load
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -198,15 +200,29 @@ def _execute_sql(sql: str) -> str:
     """
     Execute a SQL query via snowflake-connector and return results as
     a compact markdown table string to feed back to the agent.
+    Uses key-pair auth — password auth triggers MFA on accounts where it is enforced.
     """
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding, NoEncryption, PrivateFormat, load_pem_private_key,
+    )
     import snowflake.connector
+
+    with open(Path(PRIVATE_KEY_PATH).expanduser(), "rb") as f:
+        _pk = load_pem_private_key(f.read(), password=None, backend=default_backend())
+    private_key_bytes = _pk.private_bytes(
+        encoding=Encoding.DER,
+        format=PrivateFormat.PKCS8,
+        encryption_algorithm=NoEncryption(),
+    )
+
     conn = snowflake.connector.connect(
-        account   = SNOWFLAKE_ACCOUNT,
-        user      = os.environ["SNOWFLAKE_USER"],
-        password  = os.environ.get("SNOWFLAKE_PASSWORD", ""),
-        warehouse = SNOWFLAKE_WAREHOUSE,
-        database  = SNOWFLAKE_DATABASE,
-        role      = SNOWFLAKE_ROLE,
+        account     = SNOWFLAKE_ACCOUNT,
+        user        = os.environ["SNOWFLAKE_USER"],
+        private_key = private_key_bytes,
+        warehouse   = SNOWFLAKE_WAREHOUSE,
+        database    = SNOWFLAKE_DATABASE,
+        role        = SNOWFLAKE_ROLE,
     )
     try:
         cur = conn.cursor()

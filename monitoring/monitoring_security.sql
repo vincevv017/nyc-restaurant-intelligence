@@ -294,3 +294,274 @@ ORDER BY name;
 -- 9C: Key-pair verification for the agent user
 DESCRIBE USER RESTAURANT_LOADER;
 -- RSA_PUBLIC_KEY_FP must be populated.
+
+
+-- =============================================================================
+-- STEP 10 — Feedback monitoring
+--
+-- Two complementary sources:
+--
+--   A) AGENT_FEEDBACK (custom)
+--      Thumbs up/down captured by the Streamlit app (Phase 5).
+--      Stores question + full answer + rating. Immediately queryable.
+--      Created by: memory/02_setup_feedback_table.sql
+--
+--   B) SNOWFLAKE.LOCAL.GET_AI_OBSERVABILITY_EVENTS (platform)
+--      Native Cortex Agent feedback events from the Snowflake Intelligence
+--      interface. Requires AI Observability to be enabled and the agent
+--      accessed through the platform UI (not the custom SiS app).
+--      Useful as a secondary signal if the agent is exposed via Snowsight.
+--
+--   C) SNOWFLAKE.LOCAL.CORTEX_ANALYST_REQUESTS_V (platform)
+--      Per-request Cortex Analyst feedback. The 'feedback' column carries
+--      any rating attached to an analyst sub-request inside the agent turn.
+--      Separate grant required (see 10A).
+--
+-- Note on session_id vs agent request correlation:
+--   Our session_id (UUID, client-generated) is not present in
+--   CORTEX_AGENT_USAGE_HISTORY. Correlation with cost uses USER_NAME +
+--   DATE_TRUNC('hour', ...) as a best-effort time window join.
+-- =============================================================================
+
+
+-- =============================================================================
+-- STEP 10A — Grants (run as ACCOUNTADMIN)
+-- =============================================================================
+
+-- Required for GET_AI_OBSERVABILITY_EVENTS and CORTEX_ANALYST_REQUESTS_V
+-- GRANT DATABASE ROLE SNOWFLAKE.CORTEX_USER TO ROLE RESTAURANT_LOADER;
+
+-- Required to read Cortex Agent observability events for our specific agent
+-- GRANT MONITOR ON AGENT RESTAURANT_INTELLIGENCE.MARTS.NYC_RESTAURANT_AGENT
+--   TO ROLE RESTAURANT_LOADER;
+
+-- Required for CORTEX_ANALYST_REQUESTS_V (read-only analyst request history)
+-- GRANT DATABASE ROLE SNOWFLAKE.CORTEX_ANALYST_REQUESTS_VIEWER
+--   TO ROLE RESTAURANT_LOADER;
+
+
+-- =============================================================================
+-- STEP 10B — Custom feedback: overall satisfaction rate (last 30 days)
+-- The headline metric: what % of answers were rated positively?
+-- =============================================================================
+
+SELECT
+    COUNT(*)                                                         AS total_ratings,
+    SUM(CASE WHEN rating = 'up'   THEN 1 ELSE 0 END)                AS thumbs_up,
+    SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END)                AS thumbs_down,
+    ROUND(
+        100.0 * SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END)
+        / NULLIF(COUNT(*), 0),
+        1
+    )                                                                AS satisfaction_pct
+FROM RESTAURANT_INTELLIGENCE.RAW.AGENT_FEEDBACK
+WHERE created_at >= DATEADD('day', -30, CURRENT_TIMESTAMP());
+
+
+-- =============================================================================
+-- STEP 10C — Custom feedback: daily trend
+-- Spot days with a spike in negative ratings — correlate with deploys or
+-- data changes in the ingestion pipeline.
+-- =============================================================================
+
+SELECT
+    DATE_TRUNC('day', created_at)                                   AS feedback_date,
+    COUNT(*)                                                        AS total_ratings,
+    SUM(CASE WHEN rating = 'up'   THEN 1 ELSE 0 END)               AS thumbs_up,
+    SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END)               AS thumbs_down,
+    ROUND(
+        100.0 * SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END)
+        / NULLIF(COUNT(*), 0),
+        1
+    )                                                               AS satisfaction_pct
+FROM RESTAURANT_INTELLIGENCE.RAW.AGENT_FEEDBACK
+WHERE created_at >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+GROUP BY 1
+ORDER BY 1 DESC;
+
+
+-- =============================================================================
+-- STEP 10D — Custom feedback: satisfaction rate per user
+-- Identifies users who are consistently unhappy — likely hitting a specific
+-- gap in the semantic view or health code document coverage.
+-- =============================================================================
+
+SELECT
+    user_id,
+    COUNT(*)                                                        AS total_ratings,
+    SUM(CASE WHEN rating = 'up'   THEN 1 ELSE 0 END)               AS thumbs_up,
+    SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END)               AS thumbs_down,
+    ROUND(
+        100.0 * SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END)
+        / NULLIF(COUNT(*), 0),
+        1
+    )                                                               AS satisfaction_pct
+FROM RESTAURANT_INTELLIGENCE.RAW.AGENT_FEEDBACK
+WHERE created_at >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+GROUP BY 1
+HAVING COUNT(*) >= 3                        -- exclude users with very few ratings
+ORDER BY satisfaction_pct ASC, total_ratings DESC;
+
+
+-- =============================================================================
+-- STEP 10E — Custom feedback: all thumbs-down questions, most recent first
+-- The primary list to review when improving the agent.
+-- Low-rated questions reveal: missing data, misrouted tool calls,
+-- poor answer formatting, or hallucinated facts.
+-- =============================================================================
+
+SELECT
+    created_at,
+    user_id,
+    session_id,
+    turn_index,
+    question,
+    answer,
+    DATEDIFF('second',
+        LAG(created_at) OVER (PARTITION BY session_id ORDER BY turn_index),
+        created_at
+    )                                                               AS seconds_since_prev_turn
+FROM RESTAURANT_INTELLIGENCE.RAW.AGENT_FEEDBACK
+WHERE rating = 'down'
+ORDER BY created_at DESC
+LIMIT 100;
+
+
+-- =============================================================================
+-- STEP 10F — Custom feedback: worst-rated questions by text similarity cluster
+-- Groups near-duplicate questions that all received thumbs-down.
+-- Reveals systematic gaps (e.g. all proximity queries fail, or penalty
+-- questions always get negative feedback).
+-- Simple version: group by LEFT(question, 60) to bucket common question stems.
+-- =============================================================================
+
+SELECT
+    LEFT(TRIM(question), 80)                                        AS question_prefix,
+    COUNT(*)                                                        AS negative_ratings,
+    MIN(created_at)                                                 AS first_seen,
+    MAX(created_at)                                                 AS last_seen,
+    COUNT(DISTINCT user_id)                                         AS distinct_users
+FROM RESTAURANT_INTELLIGENCE.RAW.AGENT_FEEDBACK
+WHERE rating = 'down'
+  AND question IS NOT NULL
+GROUP BY 1
+HAVING COUNT(*) >= 2
+ORDER BY negative_ratings DESC, last_seen DESC;
+
+
+-- =============================================================================
+-- STEP 10G — Custom feedback: cross-reference with agent cost
+-- For each session that produced negative feedback, show the token cost
+-- of that session's agent calls (best-effort: matched on user + hour window).
+-- Useful to spot expensive sessions that also produced bad answers —
+-- a compound problem worth fixing first.
+-- =============================================================================
+
+SELECT
+    f.user_id,
+    f.session_id,
+    DATE_TRUNC('hour', f.created_at)                               AS session_hour,
+    COUNT(f.feedback_id)                                           AS rated_turns,
+    SUM(CASE WHEN f.rating = 'down' THEN 1 ELSE 0 END)            AS thumbs_down,
+    ROUND(
+        100.0 * SUM(CASE WHEN f.rating = 'up' THEN 1 ELSE 0 END)
+        / NULLIF(COUNT(*), 0),
+        1
+    )                                                              AS satisfaction_pct,
+    COALESCE(SUM(u.TOKENS), 0)                                     AS tokens_in_window,
+    ROUND(COALESCE(SUM(u.TOKEN_CREDITS), 0) * 3.00, 4)            AS estimated_cost_usd
+FROM RESTAURANT_INTELLIGENCE.RAW.AGENT_FEEDBACK f
+LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY u
+    ON  u.USER_NAME  = f.user_id
+    AND DATE_TRUNC('hour', u.START_TIME) = DATE_TRUNC('hour', f.created_at)
+WHERE f.created_at >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+GROUP BY 1, 2, 3
+ORDER BY thumbs_down DESC, tokens_in_window DESC;
+
+
+-- =============================================================================
+-- STEP 10H — Platform feedback: Cortex Agent observability events
+-- Reads native CORTEX_AGENT_FEEDBACK events written by the Snowflake platform
+-- when the agent is used through the Snowsight Intelligence interface.
+-- RECORD_ATTRIBUTES contains the feedback payload and sentiment.
+--
+-- Prerequisites: STEP 10A grants must be applied.
+-- Note: only populated when the agent is accessed via the platform UI,
+--       NOT through our custom SiS app (which uses the REST API directly).
+-- =============================================================================
+
+-- 10H-i: Raw feedback events — inspect RECORD_ATTRIBUTES structure first
+SELECT
+    TIMESTAMP                                                       AS event_time,
+    RECORD_ATTRIBUTES:user_id::STRING                              AS user_id,
+    RECORD_ATTRIBUTES:feedback::STRING                             AS feedback_sentiment,
+    RECORD_ATTRIBUTES                                              AS raw_attributes
+FROM TABLE(SNOWFLAKE.LOCAL.GET_AI_OBSERVABILITY_EVENTS(
+    'RESTAURANT_INTELLIGENCE',
+    'MARTS',
+    'NYC_RESTAURANT_AGENT',
+    'CORTEX AGENT'
+))
+WHERE RECORD:name = 'CORTEX_AGENT_FEEDBACK'
+ORDER BY TIMESTAMP DESC
+LIMIT 50;
+
+-- 10H-ii: Platform feedback summary — positive vs negative count
+SELECT
+    DATE_TRUNC('day', TIMESTAMP)                                   AS event_date,
+    RECORD_ATTRIBUTES:feedback::STRING                             AS sentiment,
+    COUNT(*)                                                       AS count
+FROM TABLE(SNOWFLAKE.LOCAL.GET_AI_OBSERVABILITY_EVENTS(
+    'RESTAURANT_INTELLIGENCE',
+    'MARTS',
+    'NYC_RESTAURANT_AGENT',
+    'CORTEX AGENT'
+))
+WHERE RECORD:name       = 'CORTEX_AGENT_FEEDBACK'
+  AND TIMESTAMP        >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+GROUP BY 1, 2
+ORDER BY 1 DESC, 2;
+
+
+-- =============================================================================
+-- STEP 10I — Cortex Analyst request-level feedback
+-- CORTEX_ANALYST_REQUESTS_V.feedback is an ARRAY of feedback objects
+-- attached to individual Cortex Analyst sub-requests made by the agent.
+-- Useful to isolate whether negative feedback is due to SQL generation
+-- specifically (rather than the orchestration or search layers).
+--
+-- Prerequisites: STEP 10A grants must be applied.
+-- 1–2 minute lag between request and visibility in the view.
+-- =============================================================================
+
+-- 10I-i: Requests that received explicit feedback
+SELECT
+    timestamp,
+    user_id,
+    semantic_model_name,
+    latest_question,
+    generated_sql,
+    response_status_code,
+    feedback
+FROM SNOWFLAKE.LOCAL.CORTEX_ANALYST_REQUESTS_V
+WHERE feedback IS NOT NULL
+  AND ARRAY_SIZE(feedback) > 0
+  AND timestamp >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+ORDER BY timestamp DESC;
+
+-- 10I-ii: Analyst requests that came from our agent (linked via agent_request_id)
+-- source column = JSON object with agent_request_id field when request
+-- originated from a Cortex Agent tool call.
+SELECT
+    timestamp,
+    user_id,
+    latest_question,
+    generated_sql,
+    source:agent_request_id::STRING                                AS agent_request_id,
+    response_status_code,
+    feedback
+FROM SNOWFLAKE.LOCAL.CORTEX_ANALYST_REQUESTS_V
+WHERE source:agent_request_id IS NOT NULL
+  AND timestamp >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+ORDER BY timestamp DESC
+LIMIT 200;

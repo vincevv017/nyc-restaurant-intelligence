@@ -1,6 +1,6 @@
 # monitoring/ — Observability & Security (Phase 4)
 
-This folder covers Phase 4: making the Cortex Agent production-ready. Two dimensions matter — **observability** (can you see what's happening and what it costs?) and **security** (can you trust who's accessing it?). The agent built in Phase 3 is a demo without both.
+This folder covers Phase 4: making the Cortex Agent production-ready. Three dimensions matter — **observability** (can you see what's happening and what it costs?), **security** (can you trust who's accessing it?), and **quality** (are users getting useful answers?). The agent built in Phase 3 is a demo without all three.
 
 **Prerequisite:** Phase 3 complete. The agent must be deployed and answering questions before adding the observability layer.
 
@@ -10,7 +10,8 @@ This folder covers Phase 4: making the Cortex Agent production-ready. Two dimens
 
 | File | Purpose |
 |------|---------|
-| `monitoring_security.sql` | All cost monitoring queries, warehouse monitoring, authentication policy, SSO template, network policy template, and audit trail queries |
+| `monitoring_security.sql` | Cost monitoring, warehouse monitoring, feedback monitoring, authentication policy, SSO template, network policy template, and audit trail queries |
+| `../memory/02_setup_feedback_table.sql` | Creates `AGENT_FEEDBACK` table — run before deploying the Phase 5 Streamlit app |
 
 ---
 
@@ -102,7 +103,7 @@ ORDER BY total_credits DESC;
 
 **Navigate to:** Snowsight → **Dashboards** → **+ Dashboard** → name it `Cortex Agent Monitoring`
 
-Six tiles covering cost, performance, and security in one view.
+Seven tiles covering cost, performance, answer quality, and security in one view.
 
 ---
 
@@ -210,7 +211,32 @@ ORDER BY total_credits DESC;
 
 ---
 
-### Tile 6 — Security Signal: Password Logins Without MFA (table)
+### Tile 6 — Daily Satisfaction Rate (line chart)
+
+*Is answer quality improving or degrading over time?*
+
+New tile → **Line chart** → X axis: `FEEDBACK_DATE`, Y axis: `SATISFACTION_PCT`. Overlay `TOTAL_RATINGS` as a secondary series to distinguish a bad day from a day with one rating:
+
+```sql
+SELECT
+    DATE_TRUNC('day', created_at)                                   AS feedback_date,
+    COUNT(*)                                                        AS total_ratings,
+    SUM(CASE WHEN rating = 'up'   THEN 1 ELSE 0 END)               AS thumbs_up,
+    SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END)               AS thumbs_down,
+    ROUND(
+        100.0 * SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END)
+        / NULLIF(COUNT(*), 0),
+        1
+    )                                                               AS satisfaction_pct
+FROM RESTAURANT_INTELLIGENCE.RAW.AGENT_FEEDBACK
+WHERE created_at >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+GROUP BY 1
+ORDER BY 1;
+```
+
+---
+
+### Tile 7 — Security Signal: Password Logins Without MFA (table)
 
 *Are all users covered by the authentication policy?*
 
@@ -312,15 +338,175 @@ ORDER BY name;
 
 ---
 
+## Part 5 — Feedback Monitoring
+
+User feedback closes the loop between cost data and answer quality. A session that consumed 10,000 tokens is fine if the user rated it positively — and a problem if they didn't.
+
+### Two feedback sources
+
+| Source | What it captures | When it's populated |
+|--------|-----------------|---------------------|
+| `AGENT_FEEDBACK` (custom) | Thumbs up/down from the Streamlit app, with full question and answer text | Immediately, on every button click |
+| `GET_AI_OBSERVABILITY_EVENTS` (platform) | Native Cortex Agent feedback events | Only when the agent is accessed via the Snowsight Intelligence UI, not the custom SiS app |
+| `CORTEX_ANALYST_REQUESTS_V.feedback` (platform) | Feedback on individual Cortex Analyst sub-requests | 1–2 minute lag; only when a rating is attached to an analyst call |
+
+The custom table is the primary signal for this project. The platform sources become relevant if the agent is also exposed via Snowsight.
+
+### Grants required (run as ACCOUNTADMIN)
+
+```sql
+-- For GET_AI_OBSERVABILITY_EVENTS and CORTEX_ANALYST_REQUESTS_V
+GRANT DATABASE ROLE SNOWFLAKE.CORTEX_USER TO ROLE RESTAURANT_LOADER;
+
+-- For native Cortex Agent feedback events
+GRANT MONITOR ON AGENT RESTAURANT_INTELLIGENCE.MARTS.NYC_RESTAURANT_AGENT
+  TO ROLE RESTAURANT_LOADER;
+
+-- For Cortex Analyst request history
+GRANT DATABASE ROLE SNOWFLAKE.CORTEX_ANALYST_REQUESTS_VIEWER
+  TO ROLE RESTAURANT_LOADER;
+```
+
+### Overall satisfaction rate
+
+```sql
+SELECT
+    COUNT(*)                                                         AS total_ratings,
+    SUM(CASE WHEN rating = 'up'   THEN 1 ELSE 0 END)                AS thumbs_up,
+    SUM(CASE WHEN rating = 'down' THEN 1 ELSE 0 END)                AS thumbs_down,
+    ROUND(
+        100.0 * SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END)
+        / NULLIF(COUNT(*), 0),
+        1
+    )                                                                AS satisfaction_pct
+FROM RESTAURANT_INTELLIGENCE.RAW.AGENT_FEEDBACK
+WHERE created_at >= DATEADD('day', -30, CURRENT_TIMESTAMP());
+```
+
+### Reviewing thumbs-down answers
+
+The most direct use of the feedback table: pull every negatively-rated turn and read the question and answer together.
+
+```sql
+SELECT
+    created_at,
+    user_id,
+    question,
+    answer
+FROM RESTAURANT_INTELLIGENCE.RAW.AGENT_FEEDBACK
+WHERE rating = 'down'
+ORDER BY created_at DESC
+LIMIT 100;
+```
+
+Common failure patterns to look for:
+- **Wrong row count** — agent said "358 restaurants" when it meant 358 violation records
+- **Stale data** — answer cited an inspection date months older than `MAX(inspection_date)` in the dataset
+- **Tool misrouting** — a penalty question went to Cortex Analyst instead of Cortex Search
+- **Proximity radius** — answer used a 1-mile radius when the rule says 0.5 miles
+
+### Systematic gaps — clustered bad questions
+
+Groups near-duplicate questions that all received thumbs-down. Reveals categories of failure rather than one-off issues:
+
+```sql
+SELECT
+    LEFT(TRIM(question), 80)                                        AS question_prefix,
+    COUNT(*)                                                        AS negative_ratings,
+    COUNT(DISTINCT user_id)                                         AS distinct_users,
+    MAX(created_at)                                                 AS last_seen
+FROM RESTAURANT_INTELLIGENCE.RAW.AGENT_FEEDBACK
+WHERE rating = 'down'
+  AND question IS NOT NULL
+GROUP BY 1
+HAVING COUNT(*) >= 2
+ORDER BY negative_ratings DESC;
+```
+
+### Cost × quality cross-reference
+
+Expensive sessions that also produced bad answers are the highest-priority fixes — they waste credits and disappoint users.
+
+```sql
+SELECT
+    f.user_id,
+    f.session_id,
+    DATE_TRUNC('hour', f.created_at)                               AS session_hour,
+    SUM(CASE WHEN f.rating = 'down' THEN 1 ELSE 0 END)            AS thumbs_down,
+    ROUND(
+        100.0 * SUM(CASE WHEN f.rating = 'up' THEN 1 ELSE 0 END)
+        / NULLIF(COUNT(*), 0),
+        1
+    )                                                              AS satisfaction_pct,
+    ROUND(COALESCE(SUM(u.TOKEN_CREDITS), 0) * 3.00, 4)            AS estimated_cost_usd
+FROM RESTAURANT_INTELLIGENCE.RAW.AGENT_FEEDBACK f
+LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY u
+    ON  u.USER_NAME  = f.user_id
+    AND DATE_TRUNC('hour', u.START_TIME) = DATE_TRUNC('hour', f.created_at)
+WHERE f.created_at >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+GROUP BY 1, 2, 3
+ORDER BY thumbs_down DESC, estimated_cost_usd DESC;
+```
+
+> **session_id vs agent request_id:** The Streamlit app generates its own `session_id` (UUID). This does not appear in `CORTEX_AGENT_USAGE_HISTORY`, which uses Snowflake-assigned request UUIDs. The join above uses `USER_NAME + DATE_TRUNC('hour', ...)` as a best-effort time-window match, not an exact key.
+
+### Platform-level feedback (Snowsight UI only)
+
+```sql
+SELECT
+    TIMESTAMP                                                       AS event_time,
+    RECORD_ATTRIBUTES:user_id::STRING                              AS user_id,
+    RECORD_ATTRIBUTES:feedback::STRING                             AS sentiment,
+    RECORD_ATTRIBUTES                                              AS raw_attributes
+FROM TABLE(SNOWFLAKE.LOCAL.GET_AI_OBSERVABILITY_EVENTS(
+    'RESTAURANT_INTELLIGENCE',
+    'MARTS',
+    'NYC_RESTAURANT_AGENT',
+    'CORTEX AGENT'
+))
+WHERE RECORD:name = 'CORTEX_AGENT_FEEDBACK'
+ORDER BY TIMESTAMP DESC;
+```
+
+### Cortex Analyst sub-request feedback
+
+Isolates whether negative ratings are specifically caused by SQL generation, rather than the orchestration or search layers:
+
+```sql
+SELECT
+    timestamp,
+    user_id,
+    latest_question,
+    generated_sql,
+    source:agent_request_id::STRING                                AS agent_request_id,
+    response_status_code,
+    feedback
+FROM SNOWFLAKE.LOCAL.CORTEX_ANALYST_REQUESTS_V
+WHERE source:agent_request_id IS NOT NULL
+  AND timestamp >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+ORDER BY timestamp DESC;
+```
+
+---
+
 ## Security Checklist Before Production
 
+**Cost & observability**
+- [ ] `GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE` in place
+- [ ] `CORTEX_AGENT_USAGE_HISTORY` returning rows (Step 2 verify query)
+- [ ] Network policy configured for production IP ranges (if applicable)
+
+**Feedback monitoring**
+- [ ] `memory/02_setup_feedback_table.sql` executed — `AGENT_FEEDBACK` table exists
+- [ ] Streamlit app deployed with thumbs up/down buttons visible
+- [ ] Feedback grants applied if using platform observability (`CORTEX_USER`, `MONITOR ON AGENT`, `CORTEX_ANALYST_REQUESTS_VIEWER`)
+- [ ] At least one test rating recorded and visible in `AGENT_FEEDBACK`
+
+**Security**
 - [ ] All human accounts enrolled in Duo MFA
 - [ ] Authentication policy applied and verified (`SHOW AUTHENTICATION POLICIES`)
 - [ ] Service accounts use key-pair authentication — no passwords
 - [ ] Private key stored outside the project directory (not committed to Git)
-- [ ] `GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE` in place
-- [ ] `CORTEX_AGENT_USAGE_HISTORY` returning rows (Step 1 verify query)
-- [ ] Network policy configured for production IP ranges (if applicable)
 - [ ] SSO integration configured (if IdP available)
 - [ ] Zero rows in password-only user query above
 

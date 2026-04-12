@@ -21,6 +21,9 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Claude Code
+.claude/
 logs/
 
 # cortex
