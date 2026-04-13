@@ -138,7 +138,7 @@ map/
 | dbt Core | ≥ 1.8 | SQL transformations |
 | Snowflake account | Trial or paid | Target data platform |
 
-A free [Snowflake trial account](https://signup.snowflake.com/) (30 days / $400 credits) is sufficient for this entire project.
+A free [Snowflake trial account](https://signup.snowflake.com/) (30 days / $400 credits) covers Phases 1–4. **Trial accounts without a valid payment method are limited to approximately 10 Cortex AI credits per day** — this cap applies to Cortex Agent, Cortex Analyst, and Cortex Search calls. Heavy testing across all phases in a single day can hit this limit. Adding a payment method removes the cap and converts the account to paid. See [Snowflake trial account limits](https://docs.snowflake.com/en/user-guide/admin-trial-account#using-compute-resources) for details. Phases 5–6 also require a paid account for the Cortex Agent REST API and custom agent tools (noted in each phase's README).
 
 ---
 

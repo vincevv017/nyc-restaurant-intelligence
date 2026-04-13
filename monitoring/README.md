@@ -101,9 +101,13 @@ ORDER BY total_credits DESC;
 
 ## Part 2 — Snowsight Dashboard
 
-**Navigate to:** Snowsight → **Dashboards** → **+ Dashboard** → name it `Cortex Agent Monitoring`
+> ⚠️ **Legacy Dashboards are being retired.** Snowflake has announced the permanent removal of Legacy Dashboards from Snowsight:
+> - **April 20, 2026** — creation of new dashboards is blocked
+> - **June 22, 2026** — all existing dashboards are permanently removed
+>
+> **Recommended alternative:** Run the seven tile queries below as individual worksheets in Snowsight → **Projects → Worksheets**. Each query is self-contained and runs identically as a worksheet. For a persistent dashboard experience, deploy a Streamlit in Snowflake app (a starter Streamlit app is already set up in Phase 5) or migrate to a third-party BI tool of your choice. See [BCR-2260](https://docs.snowflake.com/en/release-notes/bcr-bundles/un-bundled/bcr-2260) for the official migration guide.
 
-Seven tiles covering cost, performance, answer quality, and security in one view.
+The seven tile queries below remain valid for worksheets or Streamlit apps. The chart type annotations are kept for reference if you migrate to another visualization layer.
 
 ---
 
@@ -258,9 +262,7 @@ ORDER BY 2 DESC;
 
 ---
 
-> **Dashboard refresh:** Snowsight dashboards do not auto-refresh. Set a schedule via **Dashboard settings → Auto-refresh**. `ACCOUNT_USAGE` views have up to 45 minutes of latency — requests made this morning may not appear until mid-afternoon.
-
-> **Upgrading to interactive date filters:** All six tile queries use hardcoded `DATEADD` ranges. Snowsight provides a built-in system filter `:daterange` that replaces these with an interactive date picker shared across all tiles. To enable it, replace `WHERE col >= DATEADD('day', -N, ...)` with `WHERE col = :daterange` in each query — using `=` (the only supported comparator). Columns must be `TIMESTAMP` type; `DATE` columns like `USAGE_DATE` require a cast: `USAGE_DATE::TIMESTAMP_NTZ = :daterange`. Once added to any tile query, a date range dropdown appears at the top of the dashboard automatically. A companion filter `:datebucket` can replace `DATE_TRUNC('day', col)` in GROUP BY clauses to let users toggle between daily, weekly, and monthly views. Both filters default to "Last day" — change the default to "Last 7 days" and select Save so all users open the dashboard on the same range. Ref: [Snowsight filter documentation](https://docs.snowflake.com/en/user-guide/ui-snowsight-filters).
+> **ACCOUNT_USAGE latency:** Views like `CORTEX_AGENT_USAGE_HISTORY` have up to 45 minutes of latency — requests made this morning may not appear until mid-afternoon. When running these as worksheets, allow for this lag before concluding a query returned no results.
 
 ---
 
